@@ -4,6 +4,7 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
+import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -44,19 +45,25 @@ export function brightnessView(b) {
 
 /** Menu view of `droptouch camera|mic status --json` (0.18). */
 export function mediaView(m) {
-    if (!m || typeof m !== 'object') return {on: false, label: ''};
+    if (!m || typeof m !== 'object') return {on: false, label: '', locked: false, fix: null};
+    if (m.available === false) return {on: false, label: '', locked: true, fix: null};
     const on = !!m.enabled;
-    let label = '';
+    let label = '', fix = null;
     if (on) {
         if (m.state === 'streaming') label = m.fps != null ? `Streaming · ${m.fps} fps` : 'Streaming';
-        else if (m.state === 'needs setup') label = 'Needs setup: droptouch camera setup';
+        else if (m.state === 'needs setup') {
+            fix = m.fix === 'restart' ? 'restart' : 'setup';
+            label = fix === 'restart' ? 'Restart your computer to finish camera setup' : 'Click here to finish camera setup';
+        }
         else if (m.state === 'waiting for phone') label = 'Phone not linked';
         else if (m.state === 'requested') label = m.error ? 'Turn it on in the phone app' : 'Starting…';
         else if (m.state === 'error') label = `Error: ${m.error ?? ''}`.slice(0, 60);
         else if (m.state === 'stopped') label = 'DropTouch is stopped';
     }
-    return {on, label};
+    return {on, label, locked: false, fix};
 }
+
+const PRO_URL = 'https://droptouch.vercel.app/#get';
 
 /** save_dir = "desktop" in config.toml? (simple read; the receiver does the real parsing) */
 export function savesToDesktop(text) {
@@ -95,13 +102,28 @@ export class Indicator {
         this._brightInfo.label.add_style_class_name('droptouch-dim');
         menu.addMenuItem(this._brightInfo);
         this._media = {};
-        for (const [kind, title] of [['camera', 'Phone camera as webcam'], ['mic', 'Phone microphone']]) {
+        for (const [kind, title] of [['camera', 'Camera'], ['mic', 'Microphone']]) {
             const sw = new PopupMenu.PopupSwitchMenuItem(title, false);
-            sw.connect('toggled', (_i, on) => run([CLI, kind, on ? 'on' : 'off'], `Turning the ${kind} ${on ? 'on' : 'off'}`));
-            const info = new PopupMenu.PopupMenuItem('', {reactive: false});
+            const pro = new St.Label({text: 'PRO', style_class: 'droptouch-pro', y_align: Clutter.ActorAlign.CENTER, visible: false});
+            sw.insert_child_above(pro, sw.label);
+            const info = new PopupMenu.PopupMenuItem('', {reactive: true});
             info.label.add_style_class_name('droptouch-dim');
+            const m = {sw, info, pro, busy: false, locked: false, fix: null, notified: false};
+            sw.connect('toggled', (_i, on) => {
+                if (m.locked) {
+                    sw.setToggleState(false);
+                    try { Gio.AppInfo.launch_default_for_uri(PRO_URL, null); } catch (e) { logSafe(e, 'open Pro page'); }
+                    return;
+                }
+                m.notified = false;
+                run([CLI, kind, on ? 'on' : 'off'], `Turning the ${kind} ${on ? 'on' : 'off'}`);
+                if (on) GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => { this._refreshMedia(); return GLib.SOURCE_REMOVE; });
+            });
+            info.connect('activate', () => {
+                if (m.fix === 'setup') run([CLI, 'camera', 'setup'], 'Camera setup');
+            });
             menu.addMenuItem(sw); menu.addMenuItem(info);
-            this._media[kind] = {sw, info, busy: false};
+            this._media[kind] = m;
         }
         menu.addAction('Settings…', () => run([CLI, 'settings'], 'Opening settings'));
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -154,11 +176,19 @@ export class Indicator {
                 if (!this._media) return;
                 if (!j) { m.sw.visible = m.info.visible = false; return; }
                 const v = mediaView(j);
+                m.locked = v.locked; m.fix = v.fix;
+                m.pro.visible = v.locked;
                 m.sw.visible = true;
                 m.sw.setToggleState(v.on);
-                m.sw.opacity = this._phones.size ? 255 : 140;
+                m.sw.opacity = v.locked ? 160 : this._phones.size ? 255 : 140;
                 m.info.label.text = v.label;
                 m.info.visible = !!v.label;
+                m.info.reactive = v.fix === 'setup';
+                if (v.fix && !m.notified) {
+                    m.notified = true;
+                    Main.notify('DropTouch', v.fix === 'restart' ? 'Restart your computer to finish camera setup'
+                        : 'The camera needs a one-time setup — open the DropTouch menu and click “finish camera setup”');
+                }
             };
             try {
                 const p = Gio.Subprocess.new([CLI, kind, 'status', '--json'],

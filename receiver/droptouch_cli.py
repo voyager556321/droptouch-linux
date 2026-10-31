@@ -22,6 +22,7 @@
   droptouch mic on|off|status   phone microphone as “DropTouch Microphone”
 """
 import json
+import os
 import subprocess
 import sys
 import shutil
@@ -250,25 +251,45 @@ def cmd_brightness(rest):
     print("usage: droptouch brightness on|off|status|calibrate", file=sys.stderr); return 2
 
 
+def camera_fix():
+    """Why the camera device is missing: 'restart' (module installed for another kernel, e.g. after an
+    update without reboot) or 'setup' (never set up → one pkexec step)."""
+    rel = os.uname().release
+    if os.path.exists("/etc/modprobe.d/droptouch.conf") or os.path.exists("/etc/modprobe.d/droptouch-v4l2loopback.conf"):
+        if not os.path.isdir(f"/usr/lib/modules/{rel}") or \
+                subprocess.run(["modinfo", "-n", "v4l2loopback"], capture_output=True).returncode != 0:
+            return "restart"
+    return "setup"
+
+
 def cmd_media(kind, rest):
     """0.18: droptouch camera on|off|status [--json]|setup|--front|--back|--res 720|1080 ; droptouch mic on|off|status"""
     from settings import set_key
     import features
     if not features.has(kind):
         print(f"{kind} is not available in this edition", file=sys.stderr); return 1
+    import importlib.util
+    available = importlib.util.find_spec("media") is not None
+    if not available:
+        if "--json" in rest:
+            print(json.dumps({"enabled": False, "state": "pro", "available": False})); return 0
+        print(f"{kind} is a DropTouch Pro feature: https://droptouch.vercel.app/#get", file=sys.stderr); return 1
     if kind == "camera" and rest[:1] == ["setup"]:
         import media
         if media.find_loopback():
             print("DropTouch Camera is already set up:", media.find_loopback()); return 0
-        script = media.setup_script()
-        print("The camera needs the v4l2loopback kernel module (root, once). Running via pkexec:\n")
-        print(script.replace("set -e\n", "") + "\n")
-        if "--print" in rest or not shutil.which("pkexec"):
-            return 0
-        r = subprocess.run(["pkexec", "sh", "-c", script])
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera-setup.sh")
+        if not os.path.exists(script):
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "desktop-integration", "camera-setup.sh")
+        user = os.environ.get("USER") or ""
+        if "--print" in rest:
+            subprocess.run(["sh", script, "--dry-run"]); return 0
+        tool = ["pkexec"] if shutil.which("pkexec") else ["sudo"]
+        r = subprocess.run(tool + [script, user])
         if r.returncode == 0 and media.find_loopback():
+            apply()
             print("Done:", media.find_loopback(), "is “DropTouch Camera”."); return 0
-        print("Setup did not finish (see above). You can run the commands yourself with sudo.", file=sys.stderr); return 1
+        print("Camera setup is not finished. If you just updated the system, restart your computer.", file=sys.stderr); return 1
     changed = False
     args = list(rest)
     while args:
@@ -297,10 +318,12 @@ def cmd_media(kind, rest):
     m = ((r.get("result", r) if isinstance(r, dict) else {}).get("media") or {}).get(kind)
     if not m:
         m = {"enabled": load_config(CONFIG).get(kind) is True, "state": "stopped"}
+    if kind == "camera" and m.get("state") == "needs setup":
+        m["fix"] = camera_fix()
     if "--json" in rest:
         print(json.dumps(m)); return 0
     if changed and kind == "camera" and m.get("state") == "needs setup":
-        print("First run: droptouch camera setup")
+        print("Restart your computer to finish camera setup" if m["fix"] == "restart" else "First run: droptouch camera setup")
     if not changed:
         line = f"{kind} {'on' if m['enabled'] else 'off'}: {m['state']}"
         if m.get("error"):

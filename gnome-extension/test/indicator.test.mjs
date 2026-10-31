@@ -38,10 +38,13 @@ const mbody = src.match(/export function mediaView\(m\) \{([\s\S]*?)\n\}/)[1];
 const mediaView = new Function('m', mbody);
 
 test('camera / mic menu view', () => {
-    assert.deepEqual(mediaView(null), {on: false, label: ''});
-    assert.deepEqual(mediaView({enabled: false, state: 'off'}), {on: false, label: ''});
+    assert.deepEqual(mediaView(null), {on: false, label: '', locked: false, fix: null});
+    assert.deepEqual(mediaView({enabled: false, state: 'off'}), {on: false, label: '', locked: false, fix: null});
+    assert.equal(mediaView({available: false, state: 'pro'}).locked, true);
+    assert.equal(mediaView({enabled: true, state: 'needs setup', fix: 'restart'}).label, 'Restart your computer to finish camera setup');
+    assert.equal(mediaView({enabled: true, state: 'needs setup'}).fix, 'setup');
     assert.equal(mediaView({enabled: true, state: 'streaming', fps: 29.8}).label, 'Streaming · 29.8 fps');
     assert.match(mediaView({enabled: true, state: 'needs setup'}).label, /camera setup/);
     assert.equal(mediaView({enabled: true, state: 'waiting for phone'}).label, 'Phone not linked');
-    assert.ok(src.includes('Phone camera as webcam') && src.includes('Phone microphone'));
+    assert.ok(src.includes("'Camera'") && src.includes("'Microphone'") && src.includes('PRO'));
 });

@@ -27,6 +27,7 @@ echo "• Receiver → $share"
 mkdir -p "$share" "$bin"
 cp "$root"/receiver/*.py "$root/receiver/requirements.txt" "$share/"
 cp "$root/README.md" "$share/" 2>/dev/null || true
+install -m 755 "$root/desktop-integration/camera-setup.sh" "$share/camera-setup.sh"
 if [ ! -x "$share/.venv/bin/python" ]; then
   # system site-packages: the drop zone needs PyGObject/GTK4 from the distro
   python3 -m venv --system-site-packages "$share/.venv"
@@ -84,6 +85,19 @@ elif [ -w /etc/udev/rules.d ]; then
 else
   echo "  to allow the USB link without adb, run once:"
   echo "  sudo cp $root/desktop-integration/70-droptouch-usb.rules /etc/udev/rules.d/ && sudo udevadm control --reload"
+fi
+
+if [ -f "$root/receiver/media.py" ]; then
+  echo "• Phone camera (one-time system setup — asks for your password once)"
+  if grep -qx "DropTouch Camera" /sys/class/video4linux/video*/name 2>/dev/null && ls /etc/modprobe.d/droptouch*.conf >/dev/null 2>&1; then
+    echo "  already set up"
+  elif [ "${DROPTOUCH_SKIP_CAMERA:-}" = 1 ]; then
+    echo "  skipped (DROPTOUCH_SKIP_CAMERA=1)"
+  elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v pkexec >/dev/null; then
+    pkexec "$share/camera-setup.sh" "$(id -nu)" || echo "  not finished — turn the Camera switch on later to try again"
+  elif command -v sudo >/dev/null; then
+    sudo "$share/camera-setup.sh" "$(id -nu)" || echo "  not finished — turn the Camera switch on later to try again"
+  fi
 fi
 
 echo "• Service"

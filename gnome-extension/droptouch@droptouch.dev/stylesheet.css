@@ -41,3 +41,12 @@
 .droptouch-request-button.suggested:hover { background-color: #ffffff; }
 
 .droptouch-dim { font-size: 0.9em; color: #9a9a9a; }
+
+.droptouch-pro {
+    font-size: 0.75em;
+    font-weight: bold;
+    padding: 1px 6px;
+    margin: 0 8px;
+    border-radius: 6px;
+    background-color: rgba(127, 127, 127, 0.25);
+}
