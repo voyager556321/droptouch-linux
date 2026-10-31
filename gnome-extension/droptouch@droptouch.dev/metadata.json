@@ -1,0 +1,8 @@
+{
+  "uuid": "droptouch@droptouch.dev",
+  "name": "DropTouch Overlay",
+  "description": "Draws the DropTouch proximity/drop animation and pairing QR code. Driven by the DropTouch receiver over D-Bus.",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
+  "url": "https://example.invalid/droptouch",
+  "version": 15
+}

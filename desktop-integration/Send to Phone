@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Nautilus script fallback (no nautilus-python needed): Files › right-click › Scripts › Send to Phone
+IFS=$'\n' read -r -d '' -a files <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+out=$("$HOME/.local/bin/send-to-phone" "${files[@]}" 2>&1) || notify-send -a DropTouch "Send to Phone failed" "$out"

@@ -1,0 +1,2 @@
+# DropTouch 0.16: let the logged-in user drive Android Open Accessory (no adb needed)
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d0[0-5]", TAG+="uaccess"

@@ -1,0 +1,43 @@
+.droptouch-glow { background-gradient-direction: vertical; background-gradient-start: rgba(61,90,254,0); background-gradient-end: rgba(61,90,254,0.55); }
+.droptouch-card { background-color: rgba(30,30,36,0.92); border-radius: 18px; padding: 16px 20px; color: #fff;
+                  box-shadow: 0 8px 32px rgba(0,0,0,0.45); spacing: 8px; min-width: 260px; }
+.droptouch-title { font-weight: bold; font-size: 13pt; }
+.droptouch-sub { font-size: 10pt; color: rgba(255,255,255,0.7); }
+.droptouch-bar-bg { background-color: rgba(255,255,255,0.15); border-radius: 3px; height: 6px; }
+.droptouch-bar { background-color: #3d5afe; border-radius: 3px; height: 6px; }
+.droptouch-bar.done { background-color: #00c853; }
+.droptouch-bar.failed { background-color: #ff5252; }
+.droptouch-pair { background-color: rgba(255,255,255,0.97); border-radius: 22px; padding: 24px; spacing: 12px; color: #111; }
+.droptouch-pair-hint { font-size: 10pt; color: #3c3c3c; }   /* dark grey on the white pairing card */
+.droptouch-thumb { border-radius: 16px; background-size: cover; background-color: #2a2a32;
+                   box-shadow: 0 10px 36px rgba(0,0,0,0.5); }
+.droptouch-ghost { border-radius: 999px; background-gradient-direction: vertical;
+                   background-gradient-start: rgba(61,90,254,0); background-gradient-end: rgba(61,90,254,0.75); }
+.droptouch-ghost.touching { background-gradient-end: rgba(0,200,83,0.85); }
+.droptouch-file { background-color: rgba(30,30,36,0.94); border-radius: 18px; padding: 14px 18px; spacing: 6px;
+                  color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.45); }
+.droptouch-file:hover { background-color: rgba(50,50,62,0.96); }
+.droptouch-file-name { font-size: 10.5pt; font-weight: bold; max-width: 220px; }
+.droptouch-file-hint { font-size: 9pt; color: rgba(255,255,255,0.65); }
+/* M7 polish */
+.droptouch-thumb.flying { box-shadow: 0 26px 60px rgba(0,0,0,0.55); }
+.droptouch-back { box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+.droptouch-pulse { border-radius: 20px; border: 3px solid rgba(61,90,254,0.9); }
+.droptouch-badge { background-color: #3d5afe; color: #fff; border-radius: 999px; padding: 2px 9px;
+                   font-weight: bold; margin: -8px -8px 0 0; }
+
+/* 0.15 QR-less pairing prompt — Adwaita dialog look (GNOME 50), neutral, no glow */
+.droptouch-request { background-color: #2b2b30; color: #f2f2f5; border-radius: 18px; padding: 28px 24px 20px 24px;
+                     spacing: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.08); }
+.droptouch-request-icon { color: #c8c8ce; }
+.droptouch-request-title { font-size: 15pt; font-weight: 800; }
+.droptouch-request-body { font-size: 10.5pt; color: rgba(255,255,255,0.6); }
+.droptouch-request-code { font-family: monospace; font-size: 30pt; font-weight: 600; letter-spacing: 2px; padding: 10px 0 14px 0; }
+.droptouch-request-buttons { spacing: 10px; }
+.droptouch-request-button { border-radius: 10px; padding: 9px 0; font-weight: bold; background-color: rgba(255,255,255,0.08); color: #f2f2f5; }
+.droptouch-request-button:hover { background-color: rgba(255,255,255,0.13); }
+.droptouch-request-button:focus { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.3); }
+.droptouch-request-button.suggested { background-color: #f2f2f5; color: #1f1f23; }
+.droptouch-request-button.suggested:hover { background-color: #ffffff; }
+
+.droptouch-dim { font-size: 0.9em; color: #9a9a9a; }

@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Name=DropTouch
+GenericName=Phone file drop
+Comment=Send files between your phone and this computer
+Icon=droptouch
+Exec=@CLI@ launch
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=phone;android;share;send;transfer;
+StartupNotify=false
+Actions=pair;open;settings;
+
+[Desktop Action pair]
+Name=Pair a phone
+Exec=@CLI@ pair
+
+[Desktop Action open]
+Name=Open received files
+Exec=@CLI@ open
+
+[Desktop Action settings]
+Name=Settings
+Exec=@CLI@ settings

@@ -1,0 +1,7 @@
+zeroconf>=0.131
+cryptography>=42
+qrcode[pil]>=7.4
+dbus-next>=0.2.3   # GNOME Shell overlay bridge (M4) – optional at runtime
+bless>=0.2.6       # BLE GATT peripheral via BlueZ (M3) – optional at runtime
+pyusb>=1.2       # 0.16 USB link (Android Open Accessory) – optional at runtime
+pytest>=8
