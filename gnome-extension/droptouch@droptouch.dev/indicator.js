@@ -10,6 +10,15 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {logSafe} from './card.js';
 
+// Keep the menu open when a switch is flipped (GNOME closes it by default).
+function keepOpen(item) {
+    item.activate = function () {
+        if (this._switch?.mapped ?? true)
+            this.toggle();
+    };
+    return item;
+}
+
 const HOME = GLib.get_home_dir();
 const CLI = `${HOME}/.local/bin/droptouch`;
 const CONFIG = `${HOME}/.config/droptouch/config.toml`;
@@ -88,11 +97,11 @@ export class Indicator {
         menu.addAction('Recent from phone', () => run([CLI, 'recent'], 'Opening the shelf'));
         menu.addAction('Send clipboard to phone', () => run([CLI, 'clip'], 'Sending the clipboard'));
         menu.addAction('Open received files', () => run([CLI, 'open'], 'Opening the folder'));
-        this._desktop = new PopupMenu.PopupSwitchMenuItem('Save to Desktop', false);
+        this._desktop = keepOpen(new PopupMenu.PopupSwitchMenuItem('Save to Desktop', false));
         this._desktop.connect('toggled', (_i, on) =>
             run([CLI, 'save-dir', on ? 'desktop' : 'downloads', '--apply'], 'Changing the save folder'));
         menu.addMenuItem(this._desktop);
-        this._bright = new PopupMenu.PopupSwitchMenuItem('Auto-brightness from phone', false);
+        this._bright = keepOpen(new PopupMenu.PopupSwitchMenuItem('Auto-brightness from phone', false));
         this._bright.connect('toggled', (_i, on) => {
             run([CLI, 'brightness', on ? 'on' : 'off'], 'Changing auto-brightness');
             this._applyBright({enabled: on, state: on ? 'idle' : 'off', phone: this._phones.size ? [...this._phones][0] : null});
@@ -103,7 +112,7 @@ export class Indicator {
         menu.addMenuItem(this._brightInfo);
         this._media = {};
         for (const [kind, title] of [['camera', 'Camera'], ['mic', 'Microphone']]) {
-            const sw = new PopupMenu.PopupSwitchMenuItem(title, false);
+            const sw = keepOpen(new PopupMenu.PopupSwitchMenuItem(title, false));
             const pro = new St.Label({text: 'PRO', style_class: 'droptouch-pro', y_align: Clutter.ActorAlign.CENTER, visible: false});
             sw.insert_child_above(pro, sw.label);
             const info = new PopupMenu.PopupMenuItem('', {reactive: true});
