@@ -19,6 +19,10 @@ function keepOpen(item) {
     return item;
 }
 
+// Hidden until DropTouch Pro can be bought: flip to true to bring the switches back.
+export const SHOW_MEDIA_FEATURES = false;   // Camera + Microphone
+export const SHOW_BRIGHTNESS = false;       // Auto-brightness from phone
+
 const HOME = GLib.get_home_dir();
 const CLI = `${HOME}/.local/bin/droptouch`;
 const CONFIG = `${HOME}/.config/droptouch/config.toml`;
@@ -101,38 +105,42 @@ export class Indicator {
         this._desktop.connect('toggled', (_i, on) =>
             run([CLI, 'save-dir', on ? 'desktop' : 'downloads', '--apply'], 'Changing the save folder'));
         menu.addMenuItem(this._desktop);
-        this._bright = keepOpen(new PopupMenu.PopupSwitchMenuItem('Auto-brightness from phone', false));
-        this._bright.connect('toggled', (_i, on) => {
-            run([CLI, 'brightness', on ? 'on' : 'off'], 'Changing auto-brightness');
-            this._applyBright({enabled: on, state: on ? 'idle' : 'off', phone: this._phones.size ? [...this._phones][0] : null});
-        });
-        menu.addMenuItem(this._bright);
-        this._brightInfo = new PopupMenu.PopupMenuItem('', {reactive: false});
-        this._brightInfo.label.add_style_class_name('droptouch-dim');
-        menu.addMenuItem(this._brightInfo);
         this._media = {};
-        for (const [kind, title] of [['camera', 'Camera'], ['mic', 'Microphone']]) {
-            const sw = keepOpen(new PopupMenu.PopupSwitchMenuItem(title, false));
-            const pro = new St.Label({text: 'PRO', style_class: 'droptouch-pro', y_align: Clutter.ActorAlign.CENTER, visible: false});
-            sw.insert_child_above(pro, sw.label);
-            const info = new PopupMenu.PopupMenuItem('', {reactive: true});
-            info.label.add_style_class_name('droptouch-dim');
-            const m = {sw, info, pro, busy: false, locked: false, fix: null, notified: false};
-            sw.connect('toggled', (_i, on) => {
-                if (m.locked) {
-                    sw.setToggleState(false);
-                    try { Gio.AppInfo.launch_default_for_uri(PRO_URL, null); } catch (e) { logSafe(e, 'open Pro page'); }
-                    return;
-                }
-                m.notified = false;
-                run([CLI, kind, on ? 'on' : 'off'], `Turning the ${kind} ${on ? 'on' : 'off'}`);
-                if (on) GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => { this._refreshMedia(); return GLib.SOURCE_REMOVE; });
+        if (SHOW_BRIGHTNESS) {
+            this._bright = keepOpen(new PopupMenu.PopupSwitchMenuItem('Auto-brightness from phone', false));
+            this._bright.connect('toggled', (_i, on) => {
+                run([CLI, 'brightness', on ? 'on' : 'off'], 'Changing auto-brightness');
+                this._applyBright({enabled: on, state: on ? 'idle' : 'off', phone: this._phones.size ? [...this._phones][0] : null});
             });
-            info.connect('activate', () => {
-                if (m.fix === 'setup') run([CLI, 'camera', 'setup'], 'Camera setup');
-            });
-            menu.addMenuItem(sw); menu.addMenuItem(info);
-            this._media[kind] = m;
+            menu.addMenuItem(this._bright);
+            this._brightInfo = new PopupMenu.PopupMenuItem('', {reactive: false});
+            this._brightInfo.label.add_style_class_name('droptouch-dim');
+            menu.addMenuItem(this._brightInfo);
+        }
+        if (SHOW_MEDIA_FEATURES) {
+            for (const [kind, title] of [['camera', 'Camera'], ['mic', 'Microphone']]) {
+                const sw = keepOpen(new PopupMenu.PopupSwitchMenuItem(title, false));
+                const pro = new St.Label({text: 'PRO', style_class: 'droptouch-pro', y_align: Clutter.ActorAlign.CENTER, visible: false});
+                sw.insert_child_above(pro, sw.label);
+                const info = new PopupMenu.PopupMenuItem('', {reactive: true});
+                info.label.add_style_class_name('droptouch-dim');
+                const m = {sw, info, pro, busy: false, locked: false, fix: null, notified: false};
+                sw.connect('toggled', (_i, on) => {
+                    if (m.locked) {
+                        sw.setToggleState(false);
+                        try { Gio.AppInfo.launch_default_for_uri(PRO_URL, null); } catch (e) { logSafe(e, 'open Pro page'); }
+                        return;
+                    }
+                    m.notified = false;
+                    run([CLI, kind, on ? 'on' : 'off'], `Turning the ${kind} ${on ? 'on' : 'off'}`);
+                    if (on) GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => { this._refreshMedia(); return GLib.SOURCE_REMOVE; });
+                });
+                info.connect('activate', () => {
+                    if (m.fix === 'setup') run([CLI, 'camera', 'setup'], 'Camera setup');
+                });
+                menu.addMenuItem(sw); menu.addMenuItem(info);
+                this._media[kind] = m;
+            }
         }
         menu.addAction('Settings…', () => run([CLI, 'settings'], 'Opening settings'));
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -161,7 +169,7 @@ export class Indicator {
 
     _refreshBright() {
         this._refreshMedia();
-        if (this._brightBusy) return;
+        if (!this._bright || this._brightBusy) return;
         this._brightBusy = true;
         try {
             const p = Gio.Subprocess.new([CLI, 'brightness', 'status', '--json'],

@@ -40,7 +40,6 @@ That's it. From now on the phone and laptop find each other automatically whenev
 ## Everyday use
 - **Top‑bar icon:** shows which phone is connected, opens received files, pairs a new phone, and lets you start or stop DropTouch.
 - **Where files go:** `Downloads/DropTouch` by default. Prefer the Desktop? Turn on **Save to Desktop** in the top‑bar menu.
-- **Camera and Microphone (Pro):** use your phone as a webcam and mic in Meet, Zoom and other apps. Just flip the **Camera** or **Microphone** switch in the top‑bar menu, no commands needed. Without Pro the switches show a **PRO** label — click one to see how to get it.
 - **Settings:** top‑bar menu → **Settings…** to change the save folder, turn animations on/off or remove a paired phone.
 
 DropTouch starts by itself when you log in.
@@ -48,7 +47,6 @@ DropTouch starts by itself when you log in.
 ## Troubleshooting
 - **The phone can't find the laptop.** Make sure both are on the same Wi‑Fi (guest networks often block devices from seeing each other). If you use a firewall, allow port `47823/tcp` and `5353/udp`.
 - **No icon in the top bar.** Log out and back in. Check that *Extensions* has **DropTouch Overlay** turned on.
-- **The camera switch says "Restart your computer to finish camera setup".** This happens after a system update. Restart once and the camera works again.
 - **After a big system update the icon disappeared.** Download the latest DropTouch and run `install.sh` again.
 
 ## Uninstall

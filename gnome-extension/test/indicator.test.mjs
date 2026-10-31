@@ -48,3 +48,10 @@ test('camera / mic menu view', () => {
     assert.equal(mediaView({enabled: true, state: 'waiting for phone'}).label, 'Phone not linked');
     assert.ok(src.includes("'Camera'") && src.includes("'Microphone'") && src.includes('PRO'));
 });
+
+test('camera / mic / brightness switches are behind feature flags (hidden for now)', () => {
+    assert.match(src, /export const SHOW_MEDIA_FEATURES = (true|false);/);
+    assert.match(src, /export const SHOW_BRIGHTNESS = (true|false);/);
+    assert.match(src, /if \(SHOW_BRIGHTNESS\) \{\n\s+this\._bright = /);
+    assert.match(src, /if \(SHOW_MEDIA_FEATURES\) \{\n\s+for \(const \[kind, title\]/);
+});
