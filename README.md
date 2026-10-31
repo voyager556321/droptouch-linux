@@ -58,6 +58,9 @@ Run `uninstall.sh` from the same folder. To also forget paired phones and settin
 - Each file is checked after transfer, so a broken or tampered file is never saved.
 - This Linux part is open source so you can see exactly what runs on your computer.
 
+## Contact
+Questions, bugs or ideas? Email [vovls5433@gmail.com](mailto:vovls5433@gmail.com) or open an issue here on GitHub.
+
 ## Support
 DropTouch is made by one developer. If it saves you time, you can support it on Ko‑fi:
 
