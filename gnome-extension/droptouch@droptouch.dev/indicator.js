@@ -147,10 +147,6 @@ export class Indicator {
         this._startStop = menu.addAction('Start DropTouch', () =>
             run(['systemctl', '--user', this._running ? 'stop' : 'start', 'droptouch.service'],
                 this._running ? 'Stopping DropTouch' : 'Starting DropTouch'));
-        menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        menu.addAction('Support DropTouch ☕', () => {
-            try { Gio.AppInfo.launch_default_for_uri('https://ko-fi.com/droptouch', null); } catch (e) { logSafe(e, "open Ko-fi"); }
-        });
         menu.connect('open-state-changed', (_m, open) => {
             if (open) { this._refreshToggle(); this._refreshBright(); this._poll(); } else this._unpoll();
         });
