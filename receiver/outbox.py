@@ -115,7 +115,6 @@ class PhoneLink:
         self._resume_fut = None      # pending {"type":"resume"} answer for the current file
         self.on_recent = None        # 0.11 "Recent from phone" frames → RecentStore.handle
         self.on_clip = None          # 0.13 phone clipboard → ClipboardSync.receive (async)
-        self.on_lux = None           # 0.17 ambient light → AutoBrightness.on_lux (async)
 
     async def keepalive(self):
         """Ping the phone every KEEPALIVE s. A dozing phone may not run its own pinger, but an
@@ -203,10 +202,6 @@ class PhoneLink:
                     data = await asyncio.wait_for(self.reader.readexactly(size), 60)
                     if self.on_clip:
                         tk = asyncio.get_running_loop().create_task(self.on_clip(self, m, data))
-                        self._tasks.add(tk); tk.add_done_callback(self._tasks.discard)
-                elif t == "lux":
-                    if self.on_lux:
-                        tk = asyncio.get_running_loop().create_task(self.on_lux(self.name, m.get("lux")))
                         self._tasks.add(tk); tk.add_done_callback(self._tasks.discard)
                 elif t == "bye":
                     break
@@ -310,7 +305,6 @@ class Outbox:
         self._linked = asyncio.Condition()   # notified whenever a phone (re)subscribes
         self.recent = None                   # RecentStore (0.11), set by the receiver
         self.on_clip = None                  # ClipboardSync.receive (0.13), set by the receiver
-        self.brightness = None               # AutoBrightness (0.17), set by the receiver
 
     async def serve(self, fp, device, reader, writer, resume=False, clip=False):
         """Takes over a connection that sent {"type":"subscribe"}; returns when it closes."""
@@ -319,8 +313,6 @@ class Outbox:
         if self.recent:
             link.on_recent = self.recent.handle
         link.on_clip = self.on_clip
-        if self.brightness:
-            link.on_lux = self.brightness.on_lux
         self.links[fp] = link
         if old:
             old.writer.close()
@@ -336,8 +328,6 @@ class Outbox:
         finally:
             if self.recent:
                 self.recent.link_closed(link)
-            if self.brightness and self.links.get(fp) in (link, None):
-                self.brightness.phone_gone(device)
             if self.links.get(fp) is link:
                 del self.links[fp]
                 self._changed()

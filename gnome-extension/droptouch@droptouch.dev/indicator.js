@@ -21,7 +21,6 @@ function keepOpen(item) {
 
 // Hidden until DropTouch Pro can be bought: flip to true to bring the switches back.
 export const SHOW_MEDIA_FEATURES = false;   // Camera + Microphone
-export const SHOW_BRIGHTNESS = false;       // Auto-brightness from phone
 
 const HOME = GLib.get_home_dir();
 const CLI = `${HOME}/.local/bin/droptouch`;
@@ -40,20 +39,6 @@ function run(argv, what) {
         logSafe(e, what);
         Main.notify('DropTouch', `${what} failed (run install.sh first)`);
     }
-}
-
-/** Menu view of `droptouch brightness status --json`: switch state, sensitivity, sub-label. */
-export function brightnessView(b) {
-    if (!b || typeof b !== 'object') return {on: false, linked: false, label: ''};
-    const on = !!b.enabled, linked = !!b.phone && b.state !== 'stopped';
-    let label = '';
-    if (!on) label = '';
-    else if (b.state === 'stopped') label = 'DropTouch is stopped';
-    else if (!linked) label = 'Phone not linked';
-    else if (b.paused_s > 0) label = `Paused ${Math.floor(b.paused_s / 60) + 1} min (manual change)`;
-    else if (b.state === 'unavailable' || b.state === 'error') label = `Brightness ${b.state}`;
-    else if (b.lux != null && b.target != null) label = `${b.lux} lx → ${b.target} %`;
-    return {on, linked, label};
 }
 
 /** Menu view of `droptouch camera|mic status --json` (0.18). */
@@ -106,17 +91,6 @@ export class Indicator {
             run([CLI, 'save-dir', on ? 'desktop' : 'downloads', '--apply'], 'Changing the save folder'));
         menu.addMenuItem(this._desktop);
         this._media = {};
-        if (SHOW_BRIGHTNESS) {
-            this._bright = keepOpen(new PopupMenu.PopupSwitchMenuItem('Auto-brightness from phone', false));
-            this._bright.connect('toggled', (_i, on) => {
-                run([CLI, 'brightness', on ? 'on' : 'off'], 'Changing auto-brightness');
-                this._applyBright({enabled: on, state: on ? 'idle' : 'off', phone: this._phones.size ? [...this._phones][0] : null});
-            });
-            menu.addMenuItem(this._bright);
-            this._brightInfo = new PopupMenu.PopupMenuItem('', {reactive: false});
-            this._brightInfo.label.add_style_class_name('droptouch-dim');
-            menu.addMenuItem(this._brightInfo);
-        }
         if (SHOW_MEDIA_FEATURES) {
             for (const [kind, title] of [['camera', 'Camera'], ['mic', 'Microphone']]) {
                 const sw = keepOpen(new PopupMenu.PopupSwitchMenuItem(title, false));
@@ -148,7 +122,7 @@ export class Indicator {
             run(['systemctl', '--user', this._running ? 'stop' : 'start', 'droptouch.service'],
                 this._running ? 'Stopping DropTouch' : 'Starting DropTouch'));
         menu.connect('open-state-changed', (_m, open) => {
-            if (open) { this._refreshToggle(); this._refreshBright(); this._poll(); } else this._unpoll();
+            if (open) { this._refreshToggle(); this._refreshMedia(); this._poll(); } else this._unpoll();
         });
         Main.panel.addToStatusArea('droptouch-indicator', this.button);
         this._update();
@@ -161,23 +135,6 @@ export class Indicator {
             if (ok) text = new TextDecoder().decode(bytes);
         } catch {}
         this._desktop.setToggleState(savesToDesktop(text));
-    }
-
-    _refreshBright() {
-        this._refreshMedia();
-        if (!this._bright || this._brightBusy) return;
-        this._brightBusy = true;
-        try {
-            const p = Gio.Subprocess.new([CLI, 'brightness', 'status', '--json'],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
-            p.communicate_utf8_async(null, null, (proc, res) => {
-                this._brightBusy = false;
-                try {
-                    const [, out] = proc.communicate_utf8_finish(res);
-                    this._applyBright(proc.get_successful() ? JSON.parse(out) : null);
-                } catch (e) { this._applyBright(null); }
-            });
-        } catch (e) { this._brightBusy = false; this._applyBright(null); }
     }
 
     _refreshMedia() {
@@ -216,20 +173,9 @@ export class Indicator {
         }
     }
 
-    _applyBright(b) {
-        if (!this._bright) return;
-        if (!b) { this._bright.visible = false; this._brightInfo.visible = false; return; }
-        const v = brightnessView(b);
-        this._bright.visible = true;
-        this._bright.setToggleState(v.on);
-        this._bright.opacity = v.linked ? 255 : 140;
-        this._brightInfo.label.text = v.label;
-        this._brightInfo.visible = !!v.label;
-    }
-
     _poll() {
         this._unpoll();
-        this._pollId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { this._refreshBright(); return GLib.SOURCE_CONTINUE; });
+        this._pollId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { this._refreshMedia(); return GLib.SOURCE_CONTINUE; });
     }
 
     _unpoll() { if (this._pollId) { GLib.source_remove(this._pollId); this._pollId = 0; } }
@@ -251,7 +197,6 @@ export class Indicator {
 
     destroy() {
         this._unpoll();
-        this._bright = null;
         this._media = null;
         this.button?.destroy();
         this.button = null;

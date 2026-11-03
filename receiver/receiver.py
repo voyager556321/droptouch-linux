@@ -585,14 +585,11 @@ async def main(argv=None):
     from clipboard import ClipboardSync
     rx.clipboard = ClipboardSync(rx.outbox, fp, a.name)
     rx.outbox.on_clip = rx.clipboard.receive
-    from brightness import AutoBrightness   # 0.17: follow the phone's light sensor (opt-in)
     def _cfg():
         try:
             return load_config(a.config)
         except Exception:
             return {}
-    rx.brightness = AutoBrightness(config=_cfg)
-    rx.outbox.brightness = rx.brightness
     try:
         from media import MediaBridge   # 0.18 phone camera / mic (Pro module, opt-in)
     except ImportError:
@@ -616,7 +613,6 @@ async def main(argv=None):
                                                       "animations": rx.animations,
                                                       "clipboard": rx.clipboard.mode,
                                                       "usb": usb.status(),
-                                                      "brightness": rx.brightness.status(),
                                                       "media": rx.media.status() if rx.media else None},
                                         extra={"devices": lambda req: {"ok": True, "devices": rx.devices()},
                                                "remove": lambda req: rx.remove_device(str(req.get("fp", ""))),

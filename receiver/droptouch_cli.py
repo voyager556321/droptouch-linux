@@ -15,8 +15,6 @@
   droptouch transfers [--failed|--clear|--clear-failed]   files received from the phone (and failures)
   droptouch usb                   link the phone over the USB cable (no Wi-Fi, no adb); remembered after once
   droptouch usb --adb             developer fallback: adb reverse
-  droptouch brightness on|off|status   follow the phone's light sensor (also turn it on in the app)
-  droptouch brightness calibrate [--min N] [--max N] [--offset N]   % range and shift (defaults 10 / 100 / 0)
   droptouch status                JSON status
   droptouch camera on|off|status|setup [--front|--back] [--res 720|1080]   phone camera as “DropTouch Camera”
   droptouch mic on|off|status   phone microphone as “DropTouch Microphone”
@@ -207,50 +205,6 @@ def cmd_usb(rest=()):
     return r.returncode
 
 
-def cmd_brightness(rest):
-    from settings import set_key
-    import features
-    if not features.has("auto_brightness"):
-        print("auto-brightness is not available in this edition", file=sys.stderr); return 1
-    sub = rest[0] if rest else "status"
-    if sub in ("on", "off"):
-        set_key(CONFIG, "brightness", sub == "on"); apply()
-        print(f"auto-brightness {sub}" + (" — also enable “Laptop brightness from this phone” in the app" if sub == "on" else ""))
-        return 0
-    if sub == "calibrate":
-        keys = {"--min": "brightness_min", "--max": "brightness_max", "--offset": "brightness_offset"}
-        it = iter(rest[1:])
-        for k in it:
-            if k not in keys:
-                print("usage: droptouch brightness calibrate [--min N] [--max N] [--offset N]", file=sys.stderr); return 2
-            try:
-                v = float(next(it))
-            except (StopIteration, ValueError):
-                print(f"{k} needs a number", file=sys.stderr); return 2
-            set_key(CONFIG, keys[k], int(v) if v.is_integer() else v)
-        apply()
-        sub = "status"
-    if sub == "status":
-        r = request({"cmd": "status"})
-        b = (r.get("result", r) if isinstance(r, dict) else {}).get("brightness")
-        if "--json" in rest:
-            if not b:
-                b = {"enabled": load_config(CONFIG).get("brightness") is True, "state": "stopped"}
-            print(json.dumps(b)); return 0
-        if not b:
-            cfg = load_config(CONFIG)
-            print(f"auto-brightness {'on' if cfg.get('brightness') is True else 'off'} (receiver not running)"); return 0
-        c = b["calibration"]
-        line = f"auto-brightness {'on' if b['enabled'] else 'off'}: {b['state']}"
-        if b.get("phone"):
-            line += f" — {b['phone']}, {b['lux']} lx → {b['target']} %"
-        if b.get("paused_s"):
-            line += f", paused {b['paused_s'] // 60 + 1} min (manual change)"
-        print(line + f"  [min {c['min']:g} %, max {c['max']:g} %, offset {c['offset']:+g}]")
-        return 0
-    print("usage: droptouch brightness on|off|status|calibrate", file=sys.stderr); return 2
-
-
 def camera_fix():
     """Why the camera device is missing: 'restart' (module installed for another kernel, e.g. after an
     update without reboot) or 'setup' (never set up → one pkexec step)."""
@@ -350,8 +304,6 @@ def main(argv=None):
         return cmd_transfers(rest)
     if cmd == "usb":
         return cmd_usb(rest)
-    if cmd == "brightness":
-        return cmd_brightness(rest)
     if cmd in ("camera", "mic"):
         return cmd_media(cmd, rest)
     if cmd == "clipboard":

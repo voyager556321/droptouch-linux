@@ -20,20 +20,6 @@ test('menu has every requested entry', () => {
         assert.ok(src.includes(s), s);
 });
 
-const bbody = src.match(/export function brightnessView\(b\) \{([\s\S]*?)\n\}/)[1];
-const brightnessView = new Function('b', bbody);
-
-test('auto-brightness menu view', () => {
-    assert.deepEqual(brightnessView(null), {on: false, linked: false, label: ''});
-    assert.deepEqual(brightnessView({enabled: false, state: 'off'}), {on: false, linked: false, label: ''});
-    assert.equal(brightnessView({enabled: true, state: 'stopped'}).label, 'DropTouch is stopped');
-    assert.equal(brightnessView({enabled: true, state: 'idle', phone: null}).label, 'Phone not linked');
-    const f = brightnessView({enabled: true, state: 'following', phone: 'Pixel', lux: 120.5, target: 54, paused_s: 0});
-    assert.deepEqual(f, {on: true, linked: true, label: '120.5 lx → 54 %'});
-    assert.match(brightnessView({enabled: true, state: 'paused', phone: 'P', paused_s: 600}).label, /Paused 11 min/);
-    assert.ok(src.includes('Auto-brightness from phone'));
-});
-
 const mbody = src.match(/export function mediaView\(m\) \{([\s\S]*?)\n\}/)[1];
 const mediaView = new Function('m', mbody);
 
@@ -49,9 +35,12 @@ test('camera / mic menu view', () => {
     assert.ok(src.includes("'Camera'") && src.includes("'Microphone'") && src.includes('PRO'));
 });
 
-test('camera / mic / brightness switches are behind feature flags (hidden for now)', () => {
+test('camera / mic switches are behind feature flags (hidden for now)', () => {
     assert.match(src, /export const SHOW_MEDIA_FEATURES = (true|false);/);
-    assert.match(src, /export const SHOW_BRIGHTNESS = (true|false);/);
-    assert.match(src, /if \(SHOW_BRIGHTNESS\) \{\n\s+this\._bright = /);
     assert.match(src, /if \(SHOW_MEDIA_FEATURES\) \{\n\s+for \(const \[kind, title\]/);
+});
+
+test('no auto-brightness and no Support item in the menu', () => {
+    assert.ok(!/bright/i.test(src));
+    assert.ok(!/Support|ko-fi/i.test(src));
 });
