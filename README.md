@@ -3,6 +3,8 @@
 **Move photos, files and your clipboard between your Android phone and your Linux laptop by just flicking them across.**
 No cables, no cloud, no accounts. Works on your home Wi‑Fi.
 
+🌐 **Website:** [droptouch.vercel.app](https://droptouch.vercel.app) · Windows version: in review
+
 - 📲 **Phone → laptop:** share a photo or file to DropTouch on your phone and flick it toward the laptop. It flies onto your screen and is saved.
 - 💻 **Laptop → phone:** drag a file to any edge of your screen, or right‑click it in Files → **Send to Phone**.
 - 📋 **Shared clipboard:** copy on one device, paste on the other.
@@ -32,8 +34,10 @@ No cables, no cloud, no accounts. Works on your home Wi‑Fi.
 
 ## Connect your phone (one time)
 1. Install the **DropTouch** app on your phone.
-2. On the laptop open **DropTouch** from the app grid. A pairing QR code appears.
-3. On the phone open DropTouch → **Pair** and scan the code.
+2. On the phone open DropTouch → **Pair**. Your laptop shows up in the list. Tap it.
+3. Both screens show the same 6‑digit code. Check that they match, then accept on the laptop and confirm on the phone.
+
+Can't see the laptop in the list? Open **DropTouch** from the laptop's app grid and scan the QR code it shows instead.
 
 That's it. From now on the phone and laptop find each other automatically whenever they're on the same Wi‑Fi.
 
@@ -53,18 +57,18 @@ DropTouch starts by itself when you log in.
 Run `uninstall.sh` from the same folder. To also forget paired phones and settings, run `./uninstall.sh --purge`.
 
 ## Privacy & security
-- Your phone and laptop are paired once with a QR code and from then on only trust each other: every connection is encrypted and both sides check each other's certificate.
+- Your phone and laptop are paired once and from then on only trust each other: every connection is encrypted and both sides check each other's certificate.
 - Files never leave your local network.
 - Each file is checked after transfer, so a broken or tampered file is never saved.
-- This Linux part is open source so you can see exactly what runs on your computer.
+- This Linux part is open source (GPL‑3.0), so you can see exactly what runs on your computer. The Android app is not open source.
+- Full details: [privacy policy](https://droptouch.vercel.app/privacy).
+
+## Pricing
+DropTouch is free for photos and videos up to 2 GB each and other files up to 25 MB, between one phone and one laptop.
+**Pro** is a one‑time $5 for any file of any size and more devices, with a 7‑day free trial. You buy it in the phone app, and your laptop gets Pro from the paired phone. See [droptouch.vercel.app](https://droptouch.vercel.app/#pricing).
 
 ## Contact
 Questions, bugs or ideas? Email [vovls5433@gmail.com](mailto:vovls5433@gmail.com) or open an issue here on GitHub.
-
-## Support
-DropTouch is made by one developer. If it saves you time, you can support it on Ko‑fi:
-
-[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20DropTouch-29abe0?logo=ko-fi&logoColor=white)](https://ko-fi.com/droptouch)
 
 ---
 
@@ -78,3 +82,9 @@ DropTouch is made by one developer. If it saves you time, you can support it on 
 - Tests: `cd receiver && ./run_tests.sh`; extension physics: `node --test gnome-extension/test/`
 - Logs: `journalctl --user -b -o cat | grep -i droptouch`
 </details>
+
+## License
+Copyright © 2026 Volodymyr Laskarzhevskyi.
+
+The code in this repository is free software under the [GNU General Public License v3.0](LICENSE): you may use, study, change and share it, and changed versions you distribute must stay under the same license.
+The DropTouch name and logo are not covered by this license. Please use a different name for your own builds.
