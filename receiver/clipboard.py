@@ -4,7 +4,7 @@ Source: clipwatch.py (GTK 4 on Xwayland, sees every copy without focus or a re-l
 `offer()`; the control socket's "clip_offer" does the same (tests, future extension hook).
 Modes (config.toml `clipboard`, CLI `droptouch clipboard auto|manual|off`):
   auto   (default) every copy goes to the linked phone, debounced, text ≤ 1 MB
-  manual only `droptouch clip` / the top-bar "Send clipboard to phone" sends the latest copy
+  manual only `droptouch clip` / the Quick Settings tile "Send clipboard" sends the latest copy
   off    the watcher isn't even running
 
 Wire (only to phones that subscribed with "clip":1, so older apps never see it):

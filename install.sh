@@ -111,7 +111,7 @@ nautilus -q 2>/dev/null || true
 cat <<MSG
 
 DropTouch is installed and running (systemctl --user status droptouch).
- ▸ Log out and back in once so GNOME loads the DropTouch extension (top-bar icon).
- ▸ Then open "DropTouch" from the app grid, or use the top-bar menu → "Pair a phone…".
+ ▸ Log out and back in once so GNOME loads the DropTouch extension (Quick Settings tile).
+ ▸ Then open "DropTouch" from the app grid, or Quick Settings → DropTouch ▸ → Settings… → Add phone.
 To remove it: ./uninstall.sh
 MSG

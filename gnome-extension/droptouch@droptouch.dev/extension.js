@@ -473,7 +473,7 @@ export default class DropTouchExtension extends Extension {
     enable() {
         log(`DropTouch: extension v${this.metadata?.version ?? '?'} enabled (GNOME Shell ${Config.PACKAGE_VERSION})`);
         this._overlay = new Overlay(this);
-        try { this._indicator = new Indicator(this.path); } catch (e) { logSafe(e, 'top-bar indicator'); }
+        try { this._indicator = new Indicator(this.path); } catch (e) { logSafe(e, 'quick settings tile'); }
         this._watchConfig();
         this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE_XML, guard(this._overlay));
         this._dbus.export(Gio.DBus.session, OBJ_PATH);

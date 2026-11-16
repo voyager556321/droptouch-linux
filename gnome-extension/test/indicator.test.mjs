@@ -15,9 +15,27 @@ test('Save to Desktop toggle reads config.toml', () => {
     assert.equal(savesToDesktop(''), false);
 });
 
-test('menu has every requested entry', () => {
-    for (const s of ['Pair a phone…', 'Open received files', 'Save to Desktop', "'stop' : 'start'", 'droptouch.service'])
-        assert.ok(src.includes(s), s);
+test('Quick Settings tile: toggle starts/stops the service, menu has exactly four entries', () => {
+    assert.ok(src.includes("from 'resource:///org/gnome/shell/ui/quickSettings.js'"));
+    assert.match(src, /new QuickMenuToggle\(\{title: 'DropTouch'/);
+    assert.ok(src.includes("start ? 'start' : 'stop', SERVICE") && src.includes("'droptouch.service'"));
+    assert.ok(src.includes('addExternalIndicator'));
+    assert.ok(!src.includes('PanelMenu') && !src.includes('addToStatusArea'), 'no separate top-bar icon');
+    const menu = src.match(/export const MENU = \[([\s\S]*?)\n\];/)[1];
+    const labels = [...menu.matchAll(/\['([^']+)', \[/g)].map(m => m[1]);
+    assert.deepEqual(labels, ['Send clipboard', 'Recent from phone', 'Open received files', 'Settings…']);
+    for (const s of ['Pair a phone', 'Save to Desktop', 'Stop DropTouch'])
+        assert.ok(!menu.includes(s), s);
+});
+
+const tbody = src.match(/export function tileSubtitle\(running, phones\) \{([\s\S]*?)\n\}/)[1];
+const tileSubtitle = new Function('running', 'phones', tbody);
+
+test('tile subtitle: connected phone or "No phone"', () => {
+    assert.equal(tileSubtitle(true, new Set()), 'No phone');
+    assert.equal(tileSubtitle(false, new Set(['SM-G950F'])), 'No phone');
+    assert.equal(tileSubtitle(true, new Set(['SM-G950F'])), 'SM-G950F');
+    assert.equal(tileSubtitle(true, ['Pixel', 'SM-G950F']), 'Pixel +1');
 });
 
 const mbody = src.match(/export function mediaView\(m\) \{([\s\S]*?)\n\}/)[1];
@@ -36,8 +54,8 @@ test('camera / mic menu view', () => {
 });
 
 test('camera / mic switches are behind feature flags (hidden for now)', () => {
-    assert.match(src, /export const SHOW_MEDIA_FEATURES = (true|false);/);
-    assert.match(src, /if \(SHOW_MEDIA_FEATURES\) \{\n\s+for \(const \[kind, title\]/);
+    assert.match(src, /export const SHOW_MEDIA_FEATURES = false;/);
+    assert.match(src, /if \(SHOW_MEDIA_FEATURES\) \{\n[^\n]*\n\s+for \(const \[kind, title\]/);
 });
 
 test('no auto-brightness and no Support item in the menu', () => {

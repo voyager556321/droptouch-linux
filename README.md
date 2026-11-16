@@ -30,21 +30,21 @@ No cables, no cloud, no accounts. Works on your home Wi‑Fi.
 **3. Run the installer.** Open the unpacked folder, right‑click `install.sh` → **Run as a Program**
 (or run `./install.sh` in a terminal inside that folder). It installs only for your user, no admin password needed.
 
-**4. Log out and back in once**, so GNOME shows the DropTouch icon in the top bar.
+**4. Log out and back in once**, so GNOME shows the DropTouch tile in Quick Settings (next to Wi‑Fi and Bluetooth).
 
 ## Connect your phone (one time)
 1. Install the **DropTouch** app on your phone.
 2. On the phone open DropTouch → **Pair**. Your laptop shows up in the list. Tap it.
-3. Both screens show the same 6‑digit code. Check that they match, then accept on the laptop and confirm on the phone.
+3. Both screens show the same 6‑digit code. Check that they match, then accept on the laptop (DropTouch window → *Home* → *Add phone*) and confirm on the phone.
 
-Can't see the laptop in the list? Open **DropTouch** from the laptop's app grid and scan the QR code it shows instead.
+Can't see the laptop in the list? On the laptop open Quick Settings → DropTouch ▸ → **Settings…** → *Add phone* → **Show QR** and scan it instead.
 
 That's it. From now on the phone and laptop find each other automatically whenever they're on the same Wi‑Fi.
 
 ## Everyday use
-- **Top‑bar icon:** shows which phone is connected, opens received files, pairs a new phone, and lets you start or stop DropTouch.
-- **Where files go:** `Downloads/DropTouch` by default. Prefer the Desktop? Turn on **Save to Desktop** in the top‑bar menu.
-- **Settings:** top‑bar menu → **Settings…** to change the save folder, turn animations on/off or remove a paired phone.
+- **Quick Settings tile:** click it to start or stop DropTouch; the subtitle shows the connected phone (or *No phone*). The ▸ arrow opens **Send clipboard**, **Recent from phone**, **Open received files** and **Settings…**.
+- **DropTouch window** (Settings…): **Home** (status, phones, *Send file…*, *Add phone*, quick switches), **Devices** (paired phones, *Remove*), **Received files** and **Settings** (save folder or *Save to Desktop*, clipboard, start at login, *Stop DropTouch*).
+- **Where files go:** `Downloads/DropTouch` by default.
 
 DropTouch starts by itself when you log in.
 

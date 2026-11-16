@@ -31,5 +31,6 @@ def test_metadata_supports_gnome_50():
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node not installed")
 def test_extension_physics_node():
-    r = subprocess.run(["node", "--test", str(EXT / "test")], capture_output=True, text=True)
+    # Node 22+ no longer takes a directory: pass the test files
+    r = subprocess.run(["node", "--test", *map(str, sorted((EXT / "test").glob("*.test.mjs")))], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr

@@ -1,4 +1,9 @@
-// Top-bar menu (v11): status, Pair a phone…, Open received files, Save to Desktop, Start/Stop.
+// Quick Settings tile (v17): "DropTouch" next to Wi-Fi / Bluetooth, no separate top-bar icon.
+//   click            → start / stop the receiver (systemctl --user start|stop droptouch.service)
+//   subtitle         → the connected phone(s), or "No phone"
+//   ▸ menu           → Send clipboard · Recent from phone · Open received files · Settings…
+// Everything else (pairing, save folder, animations, clipboard, start at login) lives in the
+// Settings window (receiver/settings_window.py, `droptouch settings`).
 // Everything runs through the `droptouch` helper (receiver/droptouch_cli.py, installed by
 // install.sh as ~/.local/bin/droptouch) or `systemctl --user`, spawned with Gio.Subprocess.
 import GLib from 'gi://GLib';
@@ -6,8 +11,8 @@ import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import {logSafe} from './card.js';
 
 // Keep the menu open when a switch is flipped (GNOME closes it by default).
@@ -20,11 +25,11 @@ function keepOpen(item) {
 }
 
 // Hidden until DropTouch Pro can be bought: flip to true to bring the switches back.
-export const SHOW_MEDIA_FEATURES = false;   // Camera + Microphone
+export const SHOW_MEDIA_FEATURES = false;    // Camera + Microphone (code kept, not shown)
 
 const HOME = GLib.get_home_dir();
 const CLI = `${HOME}/.local/bin/droptouch`;
-const CONFIG = `${HOME}/.config/droptouch/config.toml`;
+const SERVICE = 'droptouch.service';
 
 function run(argv, what) {
     try {
@@ -69,29 +74,44 @@ export function savesToDesktop(text) {
     return !!m && m[1].toLowerCase() === 'desktop';
 }
 
+/** Tile subtitle: the connected phone(s) or "No phone". */
+export function tileSubtitle(running, phones) {
+    const list = running ? [...(phones ?? [])] : [];
+    if (!list.length) return 'No phone';
+    return list.length === 1 ? list[0] : `${list[0]} +${list.length - 1}`;
+}
+
+/** The four menu entries: [label, droptouch CLI args, what (for errors)]. */
+export const MENU = [
+    ['Send clipboard', ['clip'], 'Sending the clipboard'],
+    ['Recent from phone', ['recent'], 'Opening the shelf'],
+    ['Open received files', ['open'], 'Opening the folder'],
+    ['Settings…', ['settings'], 'Opening settings'],
+];
+
 export class Indicator {
     constructor(extPath) {
         this._running = false;
         this._phones = new Set();
-        this.button = new PanelMenu.Button(0.0, 'DropTouch', false);
-        this.button.add_child(new St.Icon({
-            gicon: Gio.icon_new_for_string(`${extPath}/icons/droptouch-symbolic.svg`),
-            style_class: 'system-status-icon',
-        }));
-        const menu = this.button.menu;
-        this._status = new PopupMenu.PopupMenuItem('', {reactive: false});
-        menu.addMenuItem(this._status);
-        menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        menu.addAction('Pair a phone…', () => run([CLI, 'pair'], 'Pairing'));
-        menu.addAction('Recent from phone', () => run([CLI, 'recent'], 'Opening the shelf'));
-        menu.addAction('Send clipboard to phone', () => run([CLI, 'clip'], 'Sending the clipboard'));
-        menu.addAction('Open received files', () => run([CLI, 'open'], 'Opening the folder'));
-        this._desktop = keepOpen(new PopupMenu.PopupSwitchMenuItem('Save to Desktop', false));
-        this._desktop.connect('toggled', (_i, on) =>
-            run([CLI, 'save-dir', on ? 'desktop' : 'downloads', '--apply'], 'Changing the save folder'));
-        menu.addMenuItem(this._desktop);
+        const gicon = this._gicon = Gio.icon_new_for_string(`${extPath}/icons/droptouch-symbolic.svg`);
+        this.toggle = new QuickMenuToggle({title: 'DropTouch', subtitle: 'No phone', gicon, toggleMode: false});
+        this.toggle.connect('clicked', () => {
+            const start = !this._running;
+            this.toggle.checked = start;                     // optimistic; D-Bus name watch confirms
+            run(['systemctl', '--user', start ? 'start' : 'stop', SERVICE],
+                start ? 'Starting DropTouch' : 'Stopping DropTouch');
+        });
+        const menu = this.toggle.menu;
+        menu.setHeader(gicon, 'DropTouch', 'No phone');
+        for (const [label, args, what] of MENU) {
+            menu.addAction(label, () => {
+                Main.panel.closeQuickSettings?.();
+                run([CLI, ...args], what);
+            });
+        }
         this._media = {};
         if (SHOW_MEDIA_FEATURES) {
+            menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             for (const [kind, title] of [['camera', 'Camera'], ['mic', 'Microphone']]) {
                 const sw = keepOpen(new PopupMenu.PopupSwitchMenuItem(title, false));
                 const pro = new St.Label({text: 'PRO', style_class: 'droptouch-pro', y_align: Clutter.ActorAlign.CENTER, visible: false});
@@ -115,26 +135,17 @@ export class Indicator {
                 menu.addMenuItem(sw); menu.addMenuItem(info);
                 this._media[kind] = m;
             }
+            menu.connect('open-state-changed', (_m, open) => {
+                if (open) { this._refreshMedia(); this._poll(); } else this._unpoll();
+            });
         }
-        menu.addAction('Settings…', () => run([CLI, 'settings'], 'Opening settings'));
-        menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this._startStop = menu.addAction('Start DropTouch', () =>
-            run(['systemctl', '--user', this._running ? 'stop' : 'start', 'droptouch.service'],
-                this._running ? 'Stopping DropTouch' : 'Starting DropTouch'));
-        menu.connect('open-state-changed', (_m, open) => {
-            if (open) { this._refreshToggle(); this._refreshMedia(); this._poll(); } else this._unpoll();
-        });
-        Main.panel.addToStatusArea('droptouch-indicator', this.button);
+        // SystemIndicator without an icon: the tile only, no separate top-bar icon.
+        this.indicator = new SystemIndicator();
+        this.indicator.quickSettingsItems.push(this.toggle);
+        Main.panel.statusArea.quickSettings.addExternalIndicator(this.indicator);
+        // The extension also runs on the lock screen (D-Bus overlay): don't offer Stop there.
+        this._modeId = Main.sessionMode.connect('updated', () => this._update());
         this._update();
-    }
-
-    _refreshToggle() {
-        let text = '';
-        try {
-            const [ok, bytes] = GLib.file_get_contents(CONFIG);
-            if (ok) text = new TextDecoder().decode(bytes);
-        } catch {}
-        this._desktop.setToggleState(savesToDesktop(text));
     }
 
     _refreshMedia() {
@@ -157,7 +168,7 @@ export class Indicator {
                 if (v.fix && !m.notified) {
                     m.notified = true;
                     Main.notify('DropTouch', v.fix === 'restart' ? 'Restart your computer to finish camera setup'
-                        : 'The camera needs a one-time setup — open the DropTouch menu and click “finish camera setup”');
+                        : 'The camera needs a one-time setup — open the DropTouch tile menu and click “finish camera setup”');
                 }
             };
             try {
@@ -188,17 +199,21 @@ export class Indicator {
     }
 
     _update() {
-        const phones = [...this._phones];
-        this._status.label.text = !this._running ? 'DropTouch is stopped'
-            : phones.length ? `Running · connected: ${phones.join(', ')}` : 'Running · no phone connected';
-        this._startStop.label.text = this._running ? 'Stop DropTouch' : 'Start DropTouch';
-        this.button.opacity = this._running ? 255 : 140;
+        if (!this.toggle) return;
+        const sub = tileSubtitle(this._running, this._phones);
+        this.toggle.checked = this._running;
+        this.toggle.subtitle = sub;
+        this.toggle.menu.setHeader(this._gicon, 'DropTouch', this._running ? sub : 'Stopped');
+        this.toggle.visible = !Main.sessionMode.isLocked;
     }
 
     destroy() {
         this._unpoll();
         this._media = null;
-        this.button?.destroy();
-        this.button = null;
+        if (this._modeId) Main.sessionMode.disconnect(this._modeId);
+        this._modeId = 0;
+        this.indicator?.quickSettingsItems.forEach(i => i.destroy());
+        this.indicator?.destroy();
+        this.indicator = this.toggle = null;
     }
 }

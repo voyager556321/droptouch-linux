@@ -146,7 +146,7 @@ class Receiver:
         return {"ok": True}
 
     def apply_config(self, config, cli_save_dir=None):
-        """Live reload of config.toml (Settings window, top-bar menu): no restart needed."""
+        """Live reload of config.toml (Settings window, Quick Settings tile): no restart needed."""
         from settings import resolve_save_dir, animations_enabled
         self.dest = resolve_save_dir(cli_save_dir, config)
         self.animations = animations_enabled(config)
@@ -610,6 +610,7 @@ async def main(argv=None):
     ctl, ctl_path = await start_control(rx.outbox, a.control,
                                         on_pair=lambda: rx.start_pairing(port, a.config),
                                         info=lambda: {"save_dir": str(rx.dest), "paired": len(store.devices),
+                                                      "name": a.name, "ip": local_ip(), "port": port,
                                                       "animations": rx.animations,
                                                       "clipboard": rx.clipboard.mode,
                                                       "usb": usb.status(),

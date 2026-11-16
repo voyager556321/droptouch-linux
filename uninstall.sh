@@ -14,7 +14,7 @@ rm -f "$HOME/.local/bin/droptouch" "$HOME/.local/bin/send-to-phone" \
       "$HOME/.local/share/nautilus-python/extensions/droptouch_nautilus.py" \
       "$HOME/.local/share/nautilus/scripts/Send to Phone"
 if [ "${1:-}" = "--purge" ]; then rm -rf "$HOME/.config/droptouch" "$HOME/.cache/droptouch"; echo "Settings and pairings removed."; fi
-echo "DropTouch removed. Log out and back in to drop the top-bar icon."
+echo "DropTouch removed. Log out and back in to drop the Quick Settings tile."
 
 # 0.12 shortcut Super+Shift+V (send clipboard to phone)
 kb=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/droptouch-clip/
