@@ -6,6 +6,7 @@ HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 import send as client  # noqa: E402
 import send_to_phone  # noqa: E402
+from pairhelp import pair_accepted  # noqa: E402
 from pairing import PairingStore  # noqa: E402
 from test_transfer import paired  # noqa: E402,F401
 
@@ -30,8 +31,8 @@ def test_forget_then_pair_a_phone_then_scan(paired):
     # every code gets its OWN image file (GNOME caches images by path → stale QR was the bug)
     assert a["png"] != b["png"] and Path(b["png"]).is_file() and not Path(a["png"]).exists()
     # 4. phone scans the code on screen → paired; the older card's code is still valid too
-    assert asyncio.run(client.pair(local(b["uri"]), ccfg))["type"] == "pair_ok"
-    assert asyncio.run(client.pair(local(a["uri"]), ccfg))["type"] == "pair_ok"
+    assert pair_accepted(local(b["uri"]), ccfg, tmp / "ctl.sock")["type"] == "pair_ok"
+    assert pair_accepted(local(a["uri"]), ccfg, tmp / "ctl.sock")["type"] == "pair_ok"
     # same phone re-paired → one entry, not a pile of stale ones
     assert ctl({"cmd": "status"})["paired"] == 1
     # 5. reusing a code / a code from before a restart → clear reasons
@@ -73,5 +74,5 @@ def test_old_phone_forgets_locally_then_rescans(paired):
     time.sleep(0.05)
     shown = ctl({"cmd": "pair"})                      # the card on screen now shows THIS code
     assert Path(shown["png"]).is_file() and shown["png"] != first["png"]
-    assert asyncio.run(client.pair(local(shown["uri"]), ccfg))["type"] == "pair_ok"
+    assert pair_accepted(local(shown["uri"]), ccfg, tmp / "ctl.sock")["type"] == "pair_ok"
     assert ctl({"cmd": "status"})["paired"] == 1      # same phone, no duplicate

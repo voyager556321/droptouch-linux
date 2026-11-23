@@ -22,8 +22,12 @@ def main():
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=28, margin_bottom=20, margin_start=24, margin_end=24)
         box.append(Gtk.Image(icon_name="phone-symbolic", pixel_size=32))
         t = Gtk.Label(label=f"Connect {device}?"); t.add_css_class("title-2"); box.append(t)
-        b = Gtk.Label(label="Check that the phone shows the same code"); b.add_css_class("dim-label"); box.append(b)
-        c = Gtk.Label(label=f"{code[:3]} {code[3:]}", margin_top=8, margin_bottom=12); c.add_css_class("dt-code"); box.append(c)
+        if code:
+            b = Gtk.Label(label="Check that the phone shows the same code"); b.add_css_class("dim-label"); box.append(b)
+            c = Gtk.Label(label=f"{code[:3]} {code[3:]}", margin_top=8, margin_bottom=12); c.add_css_class("dt-code"); box.append(c)
+        else:   # QR scan: nothing to compare
+            b = Gtk.Label(label="It scanned the pairing QR code.\nAccept only if it is your phone.", justify=Gtk.Justification.CENTER,
+                          margin_bottom=12); b.add_css_class("dim-label"); box.append(b)
         row = Gtk.Box(spacing=10, homogeneous=True)
         done = [False]
         def answer(v):

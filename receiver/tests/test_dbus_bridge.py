@@ -16,6 +16,7 @@ def test_receiver_drives_overlay(tmp_path):
     from dbus_next.aio import MessageBus
     from dbus_next.service import ServiceInterface, method
     import send as client
+    from pairhelp import apair_accepted
 
     calls = []
 
@@ -56,7 +57,7 @@ def test_receiver_drives_overlay(tmp_path):
                 kv = dict(x.split("=") for x in line.split()[1:]); port, fp = int(kv["port"]), kv["fingerprint"]
             if line.startswith("PAIR "):
                 uri = re.sub(r"h=[^&]+", "h=127.0.0.1", line.split()[1])
-        await client.pair(uri, tmp_path / "c")
+        await apair_accepted(uri, tmp_path / "c", tmp_path / "ctl.sock")
         f = tmp_path / "pic.jpg"; f.write_bytes(os.urandom(3_000_000))
         frames = client.fling_frames([str(f)], x=0.3, vx=0.5, vy=-4.0)
         frames.insert(1, {"type": "drag", "phase": "move", "x": float("nan"), "y": 0.5})  # invalid → ignored
@@ -87,6 +88,7 @@ def _run_with_overlay(tmp_path, overlay, edge):
     """Receiver + `overlay` mock on the bus; the client does `send.py send --fling --edge <edge>`."""
     from dbus_next.aio import MessageBus
     import send as client
+    from pairhelp import apair_accepted
 
     async def go():
         bus = await MessageBus().connect()
@@ -103,7 +105,7 @@ def _run_with_overlay(tmp_path, overlay, edge):
                 kv = dict(x.split("=") for x in line.split()[1:]); port, fp = int(kv["port"]), kv["fingerprint"]
             if line.startswith("PAIR "):
                 uri = re.sub(r"h=[^&]+", "h=127.0.0.1", line.split()[1])
-        await client.pair(uri, tmp_path / "c")
+        await apair_accepted(uri, tmp_path / "c", tmp_path / "ctl.sock")
         from PIL import Image
         f = tmp_path / "photo.jpg"; Image.new("RGB", (64, 48), "red").save(f)
         acks = await client.send_files([str(f)], "127.0.0.1", port, fp, tmp_path / "c",

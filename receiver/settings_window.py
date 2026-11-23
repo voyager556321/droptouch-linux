@@ -403,10 +403,15 @@ def main(argv=None):
             box.append(icon_tile("list-add-symbolic"))
             text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True, spacing=2)
             if pend:
-                text.append(Gtk.Label(label=f"{pend['device']} wants to connect", xalign=0, wrap=True))
-                text.append(Gtk.Label(label=format_code(pend["code"]), xalign=0, css_classes=["dt-code"]))
-                text.append(Gtk.Label(label="Accept only if the phone shows the same code.", xalign=0, wrap=True,
-                                      css_classes=["dim-label", "caption"]))
+                where = f" ({pend['where']})" if pend.get("where") else ""
+                text.append(Gtk.Label(label=f"{pend['device']}{where} wants to connect", xalign=0, wrap=True))
+                if pend.get("kind") == "qr":   # scanned the QR: nothing to compare, only "is this your phone?"
+                    text.append(Gtk.Label(label="It scanned the pairing QR code. Accept only if it is your phone.",
+                                          xalign=0, wrap=True, css_classes=["dim-label", "caption"]))
+                else:
+                    text.append(Gtk.Label(label=format_code(pend["code"]), xalign=0, css_classes=["dt-code"]))
+                    text.append(Gtk.Label(label="Accept only if the phone shows the same code.", xalign=0, wrap=True,
+                                          css_classes=["dim-label", "caption"]))
                 box.append(text)
                 box.append(btn("Decline", lambda: self._answer(False)))
                 box.append(btn("Accept", lambda: self._answer(True), "suggested-action"))

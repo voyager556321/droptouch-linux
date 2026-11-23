@@ -18,7 +18,8 @@ def test_control_pair_issues_a_fresh_working_token(paired):
     assert r["ok"] and r["uri"] != uri0 and Path(r["png"]).is_file() and r["shown"] is False   # no overlay in tests
     import re
     uri = re.sub(r"h=[^&]+", "h=127.0.0.1", r["uri"])
-    resp = asyncio.run(client.pair(uri, tmp / "phone2", device_name="phone2"))
+    from pairhelp import pair_accepted
+    resp = pair_accepted(uri, tmp / "phone2", tmp / "ctl.sock", device_name="phone2")
     assert resp["type"] == "pair_ok" and resp["fp"] == fp
     st = send_to_phone.request({"cmd": "status"}, path=tmp / "ctl.sock")
     assert st["ok"] and st["paired"] == 2 and "save_dir" in st

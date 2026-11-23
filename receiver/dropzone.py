@@ -17,8 +17,10 @@ Needs PyGObject + GTK 4: Arch `python-gobject gtk4`, Ubuntu `python3-gi gir1.2-g
 """
 import argparse
 import os
+import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 import gi
@@ -50,6 +52,9 @@ class DropZone(Gtk.Application):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.control = control
         self.edges = edges
+        self._edge_wins = {}   # edge -> window
+        self._layouts = {}     # edge -> (width, height, monotonic time) of the last surface layout
+        self._diag_pending = False
 
     def do_activate(self):
         # Single instance (unique app id): a second launch just activates this one — don't
@@ -90,6 +95,19 @@ class DropZone(Gtk.Application):
         if self.edges:
             for edge in ("top", "bottom", "left", "right"):
                 self._edge_window(edge)
+        # diagnostics (drop zone self-heal): window/monitor state at start, on monitor changes and
+        # on SIGUSR1 (the receiver sends it right before it restarts a drop zone that missed drags)
+        mons = Gdk.Display.get_default().get_monitors()
+        mons.connect("items-changed", lambda m, pos, _rm, added: self._watch_monitors(m, pos, added))
+        self._watch_monitors(mons, 0, mons.get_n_items(), why=None)
+        GLib.timeout_add_seconds(3, lambda: self._diag("start") and GLib.SOURCE_REMOVE)
+        try:   # GLib.unix_signal_add is deprecated since PyGObject 3.52
+            gi.require_version("GLibUnix", "2.0")
+            from gi.repository import GLibUnix
+            signal_add = GLibUnix.signal_add
+        except (ImportError, ValueError):
+            signal_add = GLib.unix_signal_add
+        signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, lambda *_: self._diag("SIGUSR1"))
 
     # Thin, fully transparent windows hugging each screen edge. The extension parks them 1x1
     # while idle and only positions them (monitor under the pointer) while a drag is in progress, so
@@ -98,6 +116,15 @@ class DropZone(Gtk.Application):
         w = Gtk.ApplicationWindow(application=self, title=f"DropTouch edge: {edge}", decorated=False,
                        default_width=6, default_height=6, css_classes=["droptouch-edge"])
         w.set_child(Gtk.Box(width_request=1, height_request=1))
+        self._edge_wins[edge] = w
+        w.connect("realize", lambda w: w.get_surface().connect(
+            "layout", lambda _s, ww, hh: self._layouts.__setitem__(edge, (ww, hh, time.monotonic()))))
+        w.connect("unmap", lambda *_: print(f"dropzone: edge window {edge} unmapped", flush=True))
+        # any drag (not only files) entering the strip: tells "window got nothing" from "not a file"
+        mo = Gtk.DropControllerMotion()
+        mo.connect("enter", lambda c, *_: print(f"edge enter: {edge} files="
+                   f"{c.get_drop().get_formats().contain_gtype(Gdk.FileList) if c.get_drop() else '?'}", flush=True))
+        w.add_controller(mo)
         t = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         t.connect("enter", lambda *a: Gdk.DragAction.COPY)
         # preload: GTK fetches the file list while the drag hovers the strip, so the phone's live
@@ -108,6 +135,44 @@ class DropZone(Gtk.Application):
         w.add_controller(t)
         w.present()
 
+    def _watch_monitors(self, mons, pos, added, why="monitors changed"):
+        for i in range(pos, pos + added):
+            m = mons.get_item(i)
+            m.connect("notify::geometry", lambda *_: self._diag_soon("monitor geometry changed"))
+            m.connect("notify::scale-factor", lambda *_: self._diag_soon("monitor scale changed"))
+        if why:
+            self._diag_soon(why)
+
+    def _diag_soon(self, why):
+        if self._diag_pending:   # coalesce a burst of monitor signals; let the Shell re-place first
+            return
+        self._diag_pending = True
+
+        def fire():
+            self._diag_pending = False
+            self._diag(why)
+            return GLib.SOURCE_REMOVE
+        GLib.timeout_add(1000, fire)
+
+    def _diag(self, why):
+        mons = Gdk.Display.get_default().get_monitors()
+        ms = []
+        for i in range(mons.get_n_items()):
+            m = mons.get_item(i)
+            g = m.get_geometry()
+            scale = m.get_scale() if hasattr(m, "get_scale") else m.get_scale_factor()   # GTK 4.14+
+            ms.append(f"{m.get_connector()} {g.width}x{g.height}+{g.x}+{g.y}@{scale:g}")
+        now, ws = time.monotonic(), []
+        for edge, w in self._edge_wins.items():
+            s = w.get_surface()
+            lw, lh, lt = self._layouts.get(edge, (0, 0, None))
+            ws.append(f"{edge}: mapped={w.get_mapped()} visible={w.get_visible()} "
+                      f"surface={f'{s.get_width()}x{s.get_height()}' if s else 'none'} "
+                      f"last layout={lw}x{lh} {f'{now - lt:.0f} s ago' if lt is not None else 'never'}")
+        print(f"dropzone diag ({why}): pid {os.getpid()}; monitors: {', '.join(ms) or 'none'}; "
+              f"edges: {'; '.join(ws) or 'none'}", flush=True)
+        return True
+
     def on_layout(self, _surface, width, height):
         # the extension sizes the pad: show the label only when it was grown for a drag
         self.box.set_visible(width >= 120 and height >= 32)
@@ -116,7 +181,10 @@ class DropZone(Gtk.Application):
 
     def on_peek(self, target, _pspec):
         v = target.get_value()
-        files = [f.get_path() for f in v.get_files() if f.get_path()] if v is not None else []
+        if v is None:              # the drag left (or ended): the next drag of the same file peeks again
+            self._peeked = None
+            return
+        files = [f.get_path() for f in v.get_files() if f.get_path()]
         if not files or files[0] == getattr(self, "_peeked", None):
             return
         self._peeked = files[0]
@@ -149,7 +217,8 @@ class DropZone(Gtk.Application):
 
     def finish(self, r):
         self.box.remove_css_class("busy")
-        self.title.set_label("Sent ✓" if r.get("ok") else f"Failed: {r.get('error') or 'see receiver log'}")
+        self.title.set_label("Sent ✓" if r.get("ok") else "Cancelled" if r.get("cancelled")
+                             else f"Failed: {r.get('error') or 'see receiver log'}")
         GLib.timeout_add(2500, self.reset)
 
     def reset(self):

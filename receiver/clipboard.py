@@ -211,6 +211,9 @@ class ClipboardSync:
     # ---- phone → laptop (0.13) ----
     async def receive(self, link, m: dict, data: bytes):
         """A clip the phone sent; `data` already read off the link (size checked by the reader)."""
+        if self.mode == "off":   # security review #5: "Off" means both directions (no pastejacking)
+            log.info("clipboard from %s dropped: shared clipboard is off", link.name)
+            return False
         kind, mime = m.get("kind"), str(m.get("mime") or "")
         if m.get("sha256") and m["sha256"] != hashlib.sha256(data).hexdigest():
             log.info("clipboard from %s: hash mismatch, dropped", link.name)

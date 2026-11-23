@@ -4,8 +4,12 @@ $XDG_RUNTIME_DIR/droptouch/control.sock (dir 0700, socket 0600 → only this use
 Request: one JSON line {"cmd":"send","files":[abs paths],"edge"?:"top|bottom|left|right"}, {"cmd":"status"}
 or {"cmd":"pair"} (new one-time token, shows the QR card; result: uri, png, shown),
 {"cmd":"devices"}, {"cmd":"remove","fp"}, {"cmd":"reload"} (re-read config.toml),
-{"cmd":"clip_send"} (send the latest copy now), {"cmd":"clip_offer","kind","text"|"data"} (a copy).
-Response: JSON lines of events ({"event":"begin"|"progress"|"done",...}) then a final {"result":...}.
+{"cmd":"clip_send"} (send the latest copy now), {"cmd":"clip_offer","kind","text"|"data"} (a copy),
+{"cmd":"cancel","id"?:N} (0.20.1: stop the running push N, or every push without "id").
+Response: JSON lines of events ({"event":"job"|"begin"|"progress"|"waiting"|"done",...}) then a final
+{"result":...}. "job" (first event of a send) carries the id for "cancel". A send client that closes
+the socket before the result (Ctrl+C in send-to-phone) cancels its push. A cancelled push ends with
+{"ok":false,"cancelled":true,"error":"cancelled"}.
 """
 import asyncio
 import json
@@ -57,6 +61,12 @@ async def start_control(outbox, path: Path | None = None, on_pair=None, info=Non
             elif req.get("cmd") == "peek":   # drop zone saw which file is being dragged (live peek photo)
                 f = req.get("file")
                 await emit({"result": await outbox.out_thumb(f) if isinstance(f, str) else {"ok": False, "error": "file must be a path"}})
+            elif req.get("cmd") == "cancel":
+                jid = req.get("id")
+                if jid is not None and (not isinstance(jid, int) or isinstance(jid, bool)):
+                    await emit({"result": {"ok": False, "error": "id must be an integer"}})
+                else:
+                    await emit({"result": outbox.cancel(jid)})
             elif req.get("cmd") == "send":
                 files = req.get("files")
                 if not isinstance(files, list) or not files or not all(isinstance(f, str) for f in files):
@@ -66,7 +76,33 @@ async def start_control(outbox, path: Path | None = None, on_pair=None, info=Non
                     if edge not in ("", "top", "bottom", "left", "right"):
                         await emit({"result": {"ok": False, "error": "bad edge"}})
                     else:
-                        await emit({"result": await outbox.push(files, emit, edge)})
+                        job = {}
+
+                        async def ev(obj):
+                            if obj.get("event") == "job":
+                                job["id"] = obj.get("id")
+                            try:
+                                await emit(obj)
+                            except (ConnectionError, OSError) as e:   # client went away mid-send
+                                log.info("send client gone (%r): cancelling push #%s", e, job.get("id"))
+                                outbox.cancel(job["id"]) if "id" in job else None
+
+                        async def gone():
+                            # the client never writes after its request line: EOF = it went away (Ctrl+C)
+                            try:
+                                while await reader.read(4096):
+                                    pass
+                            except Exception:
+                                pass
+                            if "id" in job:
+                                log.info("send client disconnected: cancelling push #%s", job["id"])
+                                outbox.cancel(job["id"])
+                        watch = asyncio.get_running_loop().create_task(gone())
+                        try:
+                            res = await outbox.push(files, ev, edge)
+                        finally:
+                            watch.cancel()
+                        await emit({"result": res})
             else:
                 await emit({"result": {"ok": False, "error": "unknown cmd"}})
         except Exception as e:

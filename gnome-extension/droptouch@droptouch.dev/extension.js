@@ -351,10 +351,15 @@ class Overlay {
         const box = vbox({style_class: 'droptouch-request', reactive: true});
         box.add_child(new St.Icon({icon_name: 'phone-symbolic', icon_size: 32, style_class: 'droptouch-request-icon', x_align: Clutter.ActorAlign.CENTER}));
         box.add_child(new St.Label({text: `Connect ${device}?`, style_class: 'droptouch-request-title', x_align: Clutter.ActorAlign.CENTER}));
-        box.add_child(new St.Label({text: 'Check that the phone shows the same code', style_class: 'droptouch-request-body', x_align: Clutter.ActorAlign.CENTER}));
-        const codeLabel = new St.Label({text: `${code.slice(0, 3)} ${code.slice(3)}`, style_class: 'droptouch-request-code', x_align: Clutter.ActorAlign.CENTER});
-        codeLabel.clutter_text.ellipsize = 0; // Pango.EllipsizeMode.NONE: never cut the code to "360 32…"
-        box.add_child(codeLabel);
+        if (code) {
+            box.add_child(new St.Label({text: 'Check that the phone shows the same code', style_class: 'droptouch-request-body', x_align: Clutter.ActorAlign.CENTER}));
+            const codeLabel = new St.Label({text: `${code.slice(0, 3)} ${code.slice(3)}`, style_class: 'droptouch-request-code', x_align: Clutter.ActorAlign.CENTER});
+            codeLabel.clutter_text.ellipsize = 0; // Pango.EllipsizeMode.NONE: never cut the code to "360 32…"
+            box.add_child(codeLabel);
+        } else {   // receiver ≥ 0.20.2: a QR scan waits for Accept here; there is no code to compare
+            box.add_child(new St.Label({text: 'It scanned the pairing QR code. Accept only if it is your phone.',
+                style_class: 'droptouch-request-body', x_align: Clutter.ActorAlign.CENTER}));
+        }
         const row = new St.BoxLayout({style_class: 'droptouch-request-buttons', x_expand: true});
         const answer = verb => {
             try {

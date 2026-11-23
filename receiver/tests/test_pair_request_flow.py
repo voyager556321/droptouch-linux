@@ -34,9 +34,15 @@ async def request_pairing(port, fp, cfg, answer, confirm=True):
             w.close(); return f, (code, shown)
 
 
+def open_pairing(tmp):
+    """What "Pair a phone" does (panel menu / window / `droptouch pair`): opens QR-less pairing."""
+    assert send_to_phone.request({"cmd": "pair"}, path=tmp / "ctl.sock")["ok"]
+
+
 def test_accept_and_confirm_pairs_and_codes_match(paired):
     port, fp, _, _, _, tmp = paired
     ctl = lambda q: send_to_phone.request(q, path=tmp / "ctl.sock")  # noqa: E731
+    open_pairing(tmp)
     def accept():
         pend = ctl({"cmd": "pair_pending"})["pending"]
         assert ctl({"cmd": "pair_accept"})["ok"]
@@ -49,6 +55,7 @@ def test_accept_and_confirm_pairs_and_codes_match(paired):
 def test_decline_never_trusts(paired):
     port, fp, _, _, _, tmp = paired
     ctl = lambda q: send_to_phone.request(q, path=tmp / "ctl.sock")  # noqa: E731
+    open_pairing(tmp)
     f, _ = asyncio.run(request_pairing(port, fp, tmp / "np", lambda: ctl({"cmd": "pair_decline"})))
     assert f["type"] == "pair_error" and "Declined" in f["error"]
     assert ctl({"cmd": "status"})["paired"] == 1
@@ -60,6 +67,7 @@ def test_decline_never_trusts(paired):
 def test_accept_without_phone_confirm_does_not_trust(paired):
     port, fp, _, _, _, tmp = paired
     ctl = lambda q: send_to_phone.request(q, path=tmp / "ctl.sock")  # noqa: E731
+    open_pairing(tmp)
     async def go():
         cert, _, _ = ensure_cert(tmp / "np", "p")
         r, w = await client._open("127.0.0.1", port, fp, None)
@@ -79,6 +87,7 @@ def test_accept_without_phone_confirm_does_not_trust(paired):
 
 def test_bad_commitment_rejected(paired):
     port, fp, _, _, _, tmp = paired
+    open_pairing(tmp)
     async def go():
         cert, _, _ = ensure_cert(tmp / "np", "p")
         r, w = await client._open("127.0.0.1", port, fp, None)
@@ -87,3 +96,24 @@ def test_bad_commitment_rejected(paired):
         w.write(encode_frame({"type": "pair_reveal", "nonce": "b"})); await w.drain()
         return await read_frame(r)
     assert asyncio.run(go())["type"] == "pair_error"
+
+
+# ---- security review #2: QR-less pairing only while the user opened it on the laptop ----
+
+def test_request_refused_while_pairing_is_closed(paired):
+    port, fp, _, _, _, tmp = paired          # the fixture's QR pairing closed the window again
+    ctl = lambda q: send_to_phone.request(q, path=tmp / "ctl.sock")  # noqa: E731
+    f, _ = asyncio.run(request_pairing(port, fp, tmp / "np", lambda: None))
+    assert f["type"] == "pair_error" and "Pair a phone" in f["error"]
+    assert ctl({"cmd": "pair_pending"})["pending"] is None       # no "Connect …?" prompt was shown
+    assert ctl({"cmd": "status"})["paired"] == 1
+
+
+def test_window_closes_after_one_pairing(paired):
+    port, fp, _, _, _, tmp = paired
+    ctl = lambda q: send_to_phone.request(q, path=tmp / "ctl.sock")  # noqa: E731
+    open_pairing(tmp)
+    f, _ = asyncio.run(request_pairing(port, fp, tmp / "np", lambda: ctl({"cmd": "pair_accept"})))
+    assert f["type"] == "pair_ok"
+    f, _ = asyncio.run(request_pairing(port, fp, tmp / "np2", lambda: None))
+    assert f["type"] == "pair_error" and "Pair a phone" in f["error"]

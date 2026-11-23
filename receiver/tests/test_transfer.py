@@ -6,6 +6,7 @@ import pytest
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 import send as client  # noqa: E402
+from pairhelp import pair_accepted  # noqa: E402
 from protocol import encode_frame, read_frame  # noqa: E402
 
 
@@ -28,7 +29,7 @@ def paired(tmp_path):
     p, port, fp, dest, cfg, uri = start(tmp_path, "--pair")
     uri = re.sub(r"h=[^&]+", "h=127.0.0.1", uri)
     ccfg = tmp_path / "client"
-    resp = asyncio.run(client.pair(uri, ccfg))
+    resp = pair_accepted(uri, ccfg, tmp_path / "ctl.sock")
     assert resp["type"] == "pair_ok" and resp["fp"] == fp
     yield port, fp, dest, ccfg, uri, tmp_path
     p.terminate(); p.wait(5)

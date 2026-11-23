@@ -36,6 +36,20 @@ class PairingStore:
     def consume(self, token: str) -> bool:
         return self.check(token) == "ok"
 
+    def peek(self, token: str) -> str:
+        """Like check() but without consuming: a QR scan is checked first and consumed only once
+        the laptop user accepted it (a decline/timeout must not leave the code "used")."""
+        if token in self.used:
+            return "used"
+        exp = self.tokens.get(token)
+        if exp is None:
+            return "unknown"
+        return "ok" if exp > time.time() else "expired"
+
+    def retire(self, token: str):
+        """Drop a token without marking it used (declined scan: the code shown is dead, no alarm)."""
+        self.tokens.pop(token, None)
+
     def live_tokens(self) -> int:
         now = time.time()
         return sum(1 for e in self.tokens.values() if e > now)

@@ -12,6 +12,7 @@ def test_send_out_velocity_reaches_phone(tmp_path):
     from dbus_next.aio import MessageBus
     from dbus_next.service import ServiceInterface, method
     import send as client, send_to_phone
+    from pairhelp import apair_accepted
     from test_reverse import FakePhone
 
     calls = []
@@ -48,7 +49,7 @@ def test_send_out_velocity_reaches_phone(tmp_path):
                 kv = dict(x.split("=") for x in line.split()[1:]); port, fp = int(kv["port"]), kv["fingerprint"]
             if line.startswith("PAIR "):
                 uri = re.sub(r"h=[^&]+", "h=127.0.0.1", line.split()[1])
-        await client.pair(uri, tmp_path / "c")
+        await apair_accepted(uri, tmp_path / "c", tmp_path / "ctl.sock")
         from PIL import Image
         img = tmp_path / "x.png"; Image.new("RGB", (400, 400), (0, 99, 0)).save(img)
         phone = FakePhone(port, fp, tmp_path / "c", tmp_path / "phone")

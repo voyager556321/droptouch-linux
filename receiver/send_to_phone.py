@@ -2,7 +2,9 @@
 """send-to-phone FILE... — push files to the connected phone via the running receiver.
 
 Also used by the drop zone and the Nautilus extension. `--status` lists connected phones.
-Exit code 0 only if every file was saved on the phone.
+`--cancel` stops the running send(s); Ctrl+C stops this one. While a send takes more than a moment
+the receiver also shows a notification with a Cancel button.
+Exit code 0 only if every file was saved on the phone; 3 = cancelled.
 """
 import argparse
 import json
@@ -44,7 +46,12 @@ def main():
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--update-app", metavar="APK", help="push a DropTouch .apk; tap it on the phone to install the update")
     ap.add_argument("--edge", choices=["top", "bottom", "left", "right"], help="screen edge the card leaves through")
+    ap.add_argument("--cancel", action="store_true", help="cancel the send(s) in progress")
     a = ap.parse_args()
+    if a.cancel:
+        r = request({"cmd": "cancel"})
+        print(f"cancelled {r.get('cancelled', 0)} send(s)" if r.get("ok") else f"send-to-phone: {r.get('error')}")
+        sys.exit(0 if r.get("ok") else 1)
     if a.update_app:
         apk = Path(a.update_app).expanduser()
         if apk.suffix.lower() != ".apk" or not apk.is_file():
@@ -60,8 +67,18 @@ def main():
         elif ev["event"] == "waiting":
             print(f"\r{ev['name']}: connection lost, waiting for the phone to reconnect…", flush=True)
         elif ev["event"] == "done":
-            print(f"\r{ev['name']}: {'saved as ' + str(ev.get('saved_as')) if ev['ok'] else 'FAILED ' + str(ev.get('error'))}")
-    r = send(a.files, show, edge=a.edge or "")
+            if ev.get("cancelled"):
+                print(f"\r{ev['name']}: cancelled")
+            else:
+                print(f"\r{ev['name']}: {'saved as ' + str(ev.get('saved_as')) if ev['ok'] else 'FAILED ' + str(ev.get('error'))}")
+    try:
+        r = send(a.files, show, edge=a.edge or "")
+    except KeyboardInterrupt:          # closing the socket makes the receiver cancel this push
+        print("\nsend-to-phone: cancelled", file=sys.stderr)
+        sys.exit(3)
+    if r.get("cancelled"):
+        print("send-to-phone: cancelled", file=sys.stderr)
+        sys.exit(3)
     if r.get("ok") and a.update_app:
         print("On the phone: tap the received card (or the notification) → Install. "
               "First time only, allow DropTouch to 'Install unknown apps'.")

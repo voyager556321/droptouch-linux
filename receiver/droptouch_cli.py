@@ -60,11 +60,15 @@ def ensure_running(wait=15.0):
 def cmd_pair_answer(sub):
     if sub == "requests":
         p = request({"cmd": "pair_pending"}).get("pending")
-        print(f"{p['device']} wants to connect — code {p['code']} — {p['expires_in']} s left" if p and p.get("code")
-              else "no pending pairing request"); return 0
+        if not p:
+            print("no pending pairing request"); return 0
+        how = "scanned the QR code" if p.get("kind") == "qr" else f"code {p['code']}"
+        print(f"{p['device']} ({p.get('where', '?')}) wants to connect — {how} — {p['expires_in']} s left"); return 0
     p = request({"cmd": "pair_pending"}).get("pending")
     if sub == "accept" and p and p.get("code"):
         print(f"Accepting {p['device']} with code {p['code']} — confirm the same code on the phone")
+    elif sub == "accept" and p:
+        print(f"Accepting {p['device']} ({p.get('where', '?')}), which scanned the QR code")
     r = request({"cmd": "pair_" + sub})
     if not r.get("ok"):
         print(r.get("error", "failed"), file=sys.stderr); return 1

@@ -44,6 +44,40 @@ def unique_path(dest: Path, name: str) -> Path:
     return p
 
 
+MIN_FREE = 1 << 30    # security review #4: an upload must leave min(1 GiB, 5 % of the disk) free
+
+
+class LowSpace(ValueError):
+    pass
+
+
+def _gb(n: int) -> str:
+    return f"{n / (1 << 30):.1f} GB"
+
+
+def check_free_space(dirs, need: int, laptop: str = "the laptop"):
+    """Refuse an upload of `need` more bytes that would leave less than the reserve free on any
+    filesystem it touches (staging/parts dir and destination). A paired phone must not be able to
+    fill $HOME silently. Raises LowSpace with a message the phone shows."""
+    seen = set()
+    for d in dirs:
+        d = Path(d)
+        while not d.exists() and d != d.parent:   # destination not created yet: check its parent
+            d = d.parent
+        try:
+            dev, u = d.stat().st_dev, shutil.disk_usage(d)
+        except OSError:
+            continue
+        if dev in seen:
+            continue
+        seen.add(dev)
+        env = os.environ.get("DROPTOUCH_MIN_FREE")      # tests only
+        reserve = int(env) if env else min(MIN_FREE, u.total // 20)
+        if u.free - need < reserve:
+            raise LowSpace(f"not enough free space on {laptop}: {_gb(u.free)} free, "
+                           f"this file needs {_gb(need)} more (keeping {_gb(reserve)} free)")
+
+
 class Receiver:
     def __init__(self, dest, max_size, store, ctx, name, fp, shell, allow_unpaired=False):
         self.dest, self.max_size, self.store, self.ctx = dest, max_size, store, ctx
@@ -56,6 +90,7 @@ class Receiver:
         self.config_dir = None
         self._auto_pair_at = -1e9
         self._card_token = None         # token of the QR card currently on screen
+        self._pair_open_until = 0.0     # QR-less requests are accepted only while the user opened pairing
         self._removed = set()           # fps removed on this computer: their retries must not pop a QR
         self.animations = True
         shell.on_out_live, shell.on_out_live_end = self.outbox.out_live, self.outbox.out_live_end
@@ -75,14 +110,14 @@ class Receiver:
                     break
                 t = msg.get("type", "file")
                 if t == "pair":
-                    await self.pair(msg, writer)
+                    await self.pair(msg, reader, writer, peer[0] if peer else "?")
                     break
                 if t == "pair_request":
                     await self.pair_request(msg, reader, writer, peer[0] if peer else "?")
                     break
                 if not (self.allow_unpaired or self.store.is_paired(client_fp)):
                     writer.write(encode_frame({"type": "ack", "ok": False, "error": "not paired"}))
-                    # a phone that lost its pairing (reinstall, forgot us) → offer the QR right away
+                    # a phone that lost its pairing (reinstall, forgot us) → a "pair a phone?" hint (no QR)
                     if client_fp not in self._removed:
                         await self.auto_pair("connection from an unpaired client")
                     break
@@ -158,21 +193,110 @@ class Receiver:
         return {"ok": True, "save_dir": str(self.dest), "animations": self.animations,
                 "clipboard": getattr(getattr(self, "clipboard", None), "mode", None)}
 
-    AUTO_PAIR_INTERVAL = 300.0   # s; at most one automatic QR card per 5 min
+    AUTO_PAIR_INTERVAL = 300.0   # s; at most one automatic "pair a phone?" hint per 5 min
+    QR_ACCEPT_TTL = 50.0         # s; the phone gives up reading after 60 s (Tls.kt soTimeout)
+    REUSED_ALARM_INTERVAL = 60.0
 
     async def auto_pair(self, why):
-        """Show the pairing card on screen (never the terminal QR), rate-limited."""
+        """A phone that lost its pairing (or an unknown client) connected: a hint notification,
+        rate-limited. Security review #2b: any LAN host can trigger this, so it shows no QR (a code
+        on screen could be scanned by someone else, or seen in a screen share) and opens nothing."""
         now = time.monotonic()
         if self.port is None or now - self._auto_pair_at < self.AUTO_PAIR_INTERVAL:
             log.info("auto pairing skipped (%s): rate-limited", why)
             return None
         self._auto_pair_at = now
-        log.info("auto pairing: %s", why)
-        return await self.start_pairing(self.port, self.config_dir)
+        log.info("auto pairing hint: %s", why)
+        _desktop_notify("DropTouch: a phone wants to pair",
+                        f"{why[:1].upper()}{why[1:]}. To pair it, choose “Pair a phone” in the DropTouch menu.")
+        return {"ok": True, "notified": True}
 
-    async def start_pairing(self, port, config_dir, terminal=False):
+    @staticmethod
+    def _where(peer: str) -> str:
+        return "USB" if peer.startswith("127.") or peer in ("::1", "?") else peer
+
+    async def _ask_user(self, device: str, peer: str, code: str, reader, timeout: float):
+        """Show "Connect <device> (<ip>)?" and wait for Accept/Decline here (card, dialog or CLI)
+        while the phone waits. code="" = QR scan (nothing to compare). → (accepted, reason)."""
+        req, why = self.requests.open(peer, device)
+        log.info("pairing prompt for %s (%s): %s", device, peer, why or f"#{req['id']}")
+        if req is None:
+            return False, why
+        req["sas"] = code
+        self._decided = asyncio.Event()
+        ev = self._decided
+        def answer(ok):
+            if self.requests.decide(ok, req["id"]) is not None:
+                ev.set()
+        close_prompt = gone = decided = None
+        try:
+            close_prompt = await pair_prompt.ask(self.shell, f"{device} ({self._where(peer)})", code, answer, timeout)
+            gone = asyncio.ensure_future(reader.read(1))   # the phone sends nothing more: EOF = it gave up
+            decided = asyncio.ensure_future(ev.wait())
+            deadline = time.monotonic() + timeout
+            hung_up = False
+            while req["accepted"] is None and not hung_up:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                waits = {decided} | ({gone} if not gone.done() else set())
+                await asyncio.wait(waits, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+                if gone.done() and not gone.cancelled():
+                    # only a clean EOF means "the phone gave up"; stray bytes or a TLS error → keep waiting
+                    hung_up = gone.exception() is None and gone.result() == b""
+            if hung_up or (gone.done() and not gone.cancelled() and gone.exception() is None and gone.result() == b""):
+                return False, "phone cancelled"      # also when Accept raced with the hang-up: trust nothing
+            if req["accepted"] is True:
+                return True, ""
+            if req["accepted"] is False:
+                return False, f"Declined on {self.name}"
+            return False, f"Nobody accepted on {self.name} within {int(timeout)} s"
+        finally:
+            for f in (gone, decided):
+                if f is not None:
+                    f.cancel()
+                    if f.done() and not f.cancelled():
+                        f.exception()                  # retrieved: no "Task exception was never retrieved"
+            if close_prompt:
+                close_prompt()
+            self.requests.close(req)
+
+    def _reused_token_alarm(self, device, peer):
+        """A code that was already used is scanned again: someone else may have paired with it."""
+        now = time.monotonic()
+        if now - getattr(self, "_reused_alarm_at", -1e9) < self.REUSED_ALARM_INTERVAL:
+            return
+        self._reused_alarm_at = now
+        log.warning("pairing code scanned again by %s (%s) after it was used", device, peer)
+        _desktop_notify("DropTouch: pairing code used twice",
+                        f"{device} ({self._where(peer)}) scanned a code that was already used. "
+                        "If you didn't pair a phone just now, remove it in DropTouch → Phones.")
+
+    def _paired_notice(self, device):
+        _desktop_notify(f"New phone paired: {device}", "Not you? Open DropTouch → Phones and remove it.")
+
+    PAIRING_CLOSED = ("Pairing is closed on {name}. On the laptop choose “Pair a phone” "
+                      "(DropTouch menu or window), then try again")
+
+    def pairing_open(self) -> bool:
+        """True while a user-opened pairing window is running (`Pair a phone` / --pair, 5 min)."""
+        return time.monotonic() < self._pair_open_until
+
+    async def _close_pairing(self):
+        """One pairing per user action: close the window, retire the card's token, hide the card."""
+        self._pair_open_until = 0.0
+        if self._card_token:
+            self.store.tokens.pop(self._card_token, None)
+            self._card_token = None
+        await self.shell.hide_pairing()
+
+    async def start_pairing(self, port, config_dir, terminal=False, user=True):
         """New one-time token + QR (pair.png); shows the overlay card. Used by --pair and the
-        control-socket {"cmd":"pair"} (panel menu, "Pair a phone" launcher action)."""
+        control-socket {"cmd":"pair"} (panel menu, "Pair a phone" launcher action).
+        user=True (a person asked for it) also opens QR-less pairing for the token's lifetime."""
+        from pairing import TOKEN_TTL
+        if user:
+            self._pair_open_until = time.monotonic() + TOKEN_TTL
         token = self.store.new_token()
         uri = pairing_uri(local_ip(), port, self.fp, token, self.name)
         # A NEW file per token: GNOME Shell's texture cache keys images by path, so rewriting one
@@ -211,32 +335,67 @@ class Receiver:
                    "expired": "this pairing code expired - show a new code",
                    "used": "this pairing code was already used - show a new code"}
 
-    async def pair(self, msg, writer):
+    async def pair(self, msg, reader, writer, peer="?"):
+        """QR pairing. The token proves the phone saw the card; security review #2b: whoever
+        scans first must still be accepted here (shoulder-surfing, screen shares)."""
+        from certs import fingerprint_pem
         token = str(msg.get("token", ""))
-        name = str(msg.get("device_name", "phone"))
-        result = self.store.check(token)
-        log.info("pairing attempt from %s with token %s…: %s", name, token[:6], result)
+        name = _clean_name(msg.get("device_name"))
+        async def err(e):
+            writer.write(encode_frame({"type": "pair_error", "error": e})); await writer.drain()
+        result = self.store.peek(token)       # consumed only after Accept (a decline/timeout ≠ "used")
+        log.info("pairing attempt from %s (%s) with token %s…: %s", name, peer, token[:6], result)
         if result != "ok":
-            writer.write(encode_frame({"type": "pair_error", "error": self.PAIR_ERRORS[result]}))
-            return
+            if result == "used":
+                self._reused_token_alarm(name, peer)
+            elif result == "expired":
+                self.store.check(token)
+            return await err(self.PAIR_ERRORS[result])
+        cert = msg.get("client_cert")
         try:
-            fp = self.store.add(str(msg.get("device_name", "phone")), msg["client_cert"])
-            self.ctx.load_verify_locations(cadata=msg["client_cert"])  # trust it for new handshakes
+            fingerprint_pem(str(cert).encode())
         except Exception as e:
-            writer.write(encode_frame({"type": "pair_error", "error": f"bad certificate: {e}"}))
+            return await err(f"bad certificate: {e}")
+        ok, why = await self._ask_user(name, peer, "", reader, self.QR_ACCEPT_TTL)
+        if not ok:
+            log.info("QR pairing with %s (%s) not accepted: %s", name, peer, why)
+            if why.startswith("Declined"):
+                self.store.retire(token)        # the code on screen was seen by someone you refused
+                if self._card_token == token:
+                    await self._close_pairing()
+            if why != "phone cancelled":
+                await err(why)
             return
-        log.info("paired with %s (%s…)", msg.get("device_name"), fp[:16])
-        writer.write(encode_frame({"type": "pair_ok", "name": self.name, "fp": self.fp}))
+        if self.store.check(token) != "ok":    # expired or used while the prompt was up
+            return await err(self.PAIR_ERRORS["expired"])
+        try:
+            fp = self.store.add(name, str(cert))
+            self.ctx.load_verify_locations(cadata=str(cert))  # trust it for new handshakes
+            self._removed.discard(fp)
+        except Exception as e:
+            return await err(f"bad certificate: {e}")
+        log.info("paired with %s (%s…)", name, fp[:16])
+        try:
+            writer.write(encode_frame({"type": "pair_ok", "name": self.name, "fp": self.fp}))
+            await writer.drain()
+        except (ConnectionError, OSError) as e:   # the phone vanished right after Accept: trust nothing
+            log.info("pairing with %s rolled back: %r", name, e)
+            self.store.remove(fp)
+            return
         if self._card_token == token:
             self._card_token = None
-        await self.shell.hide_pairing()
+        await self._close_pairing()
+        self._paired_notice(name)
 
     async def pair_request(self, msg, reader, writer, peer):
         """0.15 QR-less pairing (see pairing.py). Trust only after Accept here AND Confirm on the phone."""
         from certs import fingerprint_pem
-        device = str(msg.get("device_name", "phone"))[:64]
+        device = _clean_name(msg.get("device_name"))
         async def err(e):
             writer.write(encode_frame({"type": "pair_error", "error": e})); await writer.drain()
+        if not self.pairing_open():   # security review #2: no prompt (or paywall) unless the user asked to pair
+            log.info("pairing request from %s (%s) refused: pairing is not open on this computer", device, peer)
+            return await err(self.PAIRING_CLOSED.format(name=self.name))
         try:
             cert = str(msg["client_cert"]); phone_fp = fingerprint_pem(cert.encode()); commit = str(msg["commit"])
         except Exception as e:
@@ -259,7 +418,8 @@ class Receiver:
             def answer(ok):
                 if self.requests.decide(ok, req["id"]) is not None:
                     ev.set()
-            close_prompt = await pair_prompt.ask(self.shell, device, req["sas"], answer, REQUEST_TTL)
+            close_prompt = await pair_prompt.ask(self.shell, f"{device} ({self._where(peer)})", req["sas"],
+                                                 answer, REQUEST_TTL)
             phone_read = asyncio.ensure_future(read_frame(reader))
             decided = asyncio.ensure_future(ev.wait())
             deadline, told_accepted = time.monotonic() + REQUEST_TTL, False
@@ -290,6 +450,8 @@ class Receiver:
             log.info("paired with %s (%s…) without QR", device, fp[:16])
             writer.write(encode_frame({"type": "pair_ok", "name": self.name, "fp": self.fp}))
             await writer.drain()
+            await self._close_pairing()
+            self._paired_notice(device)
         except asyncio.TimeoutError:
             await err("pairing timed out")
         finally:
@@ -308,7 +470,8 @@ class Receiver:
     def pair_pending(self):
         p = self.requests.current()
         return {"ok": True, "pending": None if p is None else {
-            "id": p["id"], "device": p["device"], "code": p["sas"],
+            "id": p["id"], "device": p["device"], "code": p["sas"], "where": self._where(p["peer"]),
+            "kind": "qr" if p["sas"] == "" else "code",   # qr: scanned the QR, nothing to compare
             "expires_in": max(0, int(p["expires"] - time.monotonic()))}}
 
     async def receive_file(self, hdr, reader, writer) -> bool:
@@ -322,6 +485,7 @@ class Receiver:
             if size < 0 or size > self.max_size:
                 raise ValueError("bad size")
             self.dest.mkdir(parents=True, exist_ok=True)
+            check_free_space([staging_dir(self.dest), self.dest], size, self.name)
             # Stage outside the destination (e.g. ~/Desktop watched by DING, which chokes on hidden
             # .part files) and rename into place once complete and verified.
             stage = staging_dir(self.dest)
@@ -419,6 +583,25 @@ class _QuietShell:
         self.recent.done(self.rid, Path(path) if ok and path else None, None if ok else "transfer failed")
 
 
+def _clean_name(raw) -> str:
+    """A phone's self-chosen device name as shown in prompts/notifications: printable, one line,
+    ≤ 64 chars (no newlines that could fake "Accept only if…" text on the card)."""
+    s = "".join(c for c in str(raw if raw is not None else "phone") if c.isprintable()).strip()
+    return s[:64] or "phone"
+
+
+def _desktop_notify(title, body):
+    """Pairing notices (new phone, code reused, pair hint). Tests set DROPTOUCH_NO_PROMPT."""
+    if os.environ.get("DROPTOUCH_NO_PROMPT"):
+        log.info("notice: %s — %s", title, body)
+        return
+    try:
+        from clipboard import notify
+        notify(title, body)
+    except Exception as e:
+        log.debug("notify: %s", e)
+
+
 _last_fail_note = [0.0]
 
 
@@ -472,6 +655,12 @@ async def _receive_resumable(self, hdr, reader, writer) -> bool:
         off = part.stat().st_size if part.exists() else 0
         if off > size:
             part.unlink(); off = 0
+        try:
+            check_free_space([d, recent.file_dir(rid) if recent else self.dest], size - off, self.name)
+        except LowSpace:
+            # the phone expects "resume" first: offset=size means "send nothing", then the ack explains
+            writer.write(encode_frame({"type": "resume", "offset": size}))
+            raise
         if off:
             log.info("resuming upload %s at %d/%d bytes", name, off, size)
         writer.write(encode_frame({"type": "resume", "offset": off}))
@@ -585,6 +774,7 @@ async def main(argv=None):
     from clipboard import ClipboardSync
     rx.clipboard = ClipboardSync(rx.outbox, fp, a.name)
     rx.outbox.on_clip = rx.clipboard.receive
+    rx.outbox.clip_in = lambda: rx.clipboard.mode != "off"
     def _cfg():
         try:
             return load_config(a.config)
@@ -626,8 +816,10 @@ async def main(argv=None):
                                                 "clip_offer": lambda req: rx.clipboard.offer(req)})
     rx.apply_config(load_config(a.config), a.save_dir)
     if not a.no_dropzone:
-        from dropzone_launcher import DropZoneLauncher
-        rx.outbox.on_change = DropZoneLauncher(ctl_path).update
+        from dropzone_launcher import DropZoneLauncher, EdgeGuard
+        launcher = DropZoneLauncher(ctl_path)
+        rx.outbox.on_change = launcher.update
+        rx.outbox.edge_guard = EdgeGuard(launcher.restart)
     print(f"READY port={port} fingerprint={fp} control={ctl_path}", flush=True)
     log.info("saving to %s; %d paired device(s)", a.dest, len(store.devices))
 
